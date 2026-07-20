@@ -4,15 +4,17 @@ This is a real, working app — not a demo. Order data is saved to an actual
 database, and it will keep working after you close the tab. Total cost to
 run this for your first several restaurants: **$0/month.**
 
-> **Already set up a Supabase project before this update?** Don't re-run
-> the whole `schema.sql` — your tables already exist, so it'll error
-> with "relation already exists." Instead, run the smaller file made
-> for this: go to your Supabase project → **SQL Editor** → **New
-> query** → open `supabase/migration_v2_security.sql` from this folder
-> → paste it in → **Run**. It only swaps the security rules, doesn't
-> touch your existing tables or data, and is safe to run more than
-> once. This closes the security hole described below, so don't skip
-> it.
+> **Already set up a Supabase project?** Five migration files may apply
+> to you, run in your Supabase SQL Editor in this order if you haven't
+> already:
+> 1. `supabase/migration_v2_security.sql` — locks down the database (see below)
+> 2. `supabase/migration_v3_menu_images.sql` — adds photos to the demo menu items
+> 3. `supabase/migration_v4_order_status.sql` — adds the function powering the customer's live order tracker
+> 4. `supabase/migration_v5_whatsapp.sql` — fills in the demo restaurant's WhatsApp number
+> 5. `supabase/migration_v6_fix_create_order.sql` — **fixes a real bug** that broke placing orders ("column reference item is ambiguous") — run this one even if you've already run everything else
+>
+> All are safe to run more than once and don't touch your existing
+> tables or data.
 
 It has three pages:
 - `pos.html` — the cashier screen — now also shows **live incoming
@@ -90,6 +92,92 @@ To add more tables or rename them, edit the `restaurant_tables` table
 directly in Supabase's **Table Editor** — no code needed. Refresh
 `qr-codes.html` afterward and the new table shows up automatically.
 
+## Menu photos
+
+Every demo menu item now has a relevant photo, both in the customer QR
+menu and on the cashier POS grid. These come from a free keyword-based
+photo service (loremflickr.com) — good enough to demo, but they're
+stock photos of the *dish type*, not your restaurant's actual food, so
+swap them out before showing this to a real customer.
+
+To set your own photo for an item: in Supabase's **Table Editor** →
+`menu_items` → find the row → paste a direct image URL into the
+`image_url` column. Any publicly accessible image URL works (e.g. one
+you've uploaded to Supabase's free file **Storage**, or any image
+hosting you already use). Leave it blank and the app just skips
+showing a photo for that item — nothing breaks either way.
+
+## Installing the POS as an app (no APK needed for most cases)
+
+`pos.html` is now a proper installable app — on the tablet or phone
+you'll use at the counter:
+
+1. Open your live Vercel link → `pos.html` in Chrome.
+2. Tap the browser menu → **"Add to Home Screen"** (Android) or
+   **"Install app"** (if Chrome shows that prompt directly).
+3. It installs a real icon on the home screen, opens full-screen with
+   no browser address bar, and keeps working for a few minutes even if
+   the wifi drops (it caches the app itself — not sales data, so it
+   never shows stale numbers, just stays open instead of going blank).
+
+This gets you 95% of what a native Android app gives you, with zero
+app-store approval wait and instant updates whenever you redeploy.
+
+**If you specifically need a real, sideloadable `.apk` file** — e.g. to
+install without visiting a URL first, or to distribute to multiple
+tablets at once — the fastest path is a free tool called
+[PWABuilder.com](https://www.pwabuilder.com): paste in your live
+`pos.html` URL, it reads the `manifest.json` already set up here, and
+generates a signed Android package for you. I can't run that tool or
+sign a package from here since it needs your live URL and a Google
+signing key tied to your account, but the manifest and icons it needs
+are already built and included in this project.
+
+## Customer wait screen — order tracker + engaging content
+
+After a customer places an order via QR, they now see:
+- A **live progress tracker** (Order received → Preparing → Ready →
+  Complete) that updates automatically every few seconds as staff move
+  the order along in the POS's incoming-orders panel.
+- A rotating **"while you wait"** card with short food facts, so the
+  screen isn't just sitting there blank. Edit the `WAIT_FACTS` array
+  near the bottom of `menu.html` to swap in facts about your actual
+  restaurant, its history, or its specific dishes.
+
+## WhatsApp integration — real and free, with one honest trade-off
+
+**Cost was never actually the blocker here** — Meta's official WhatsApp
+API is free for the volume a single restaurant needs. What blocks fully
+silent, automatic sending is Meta's approval process (Business
+verification + message template review), which takes days, not money.
+
+So instead of waiting on that, the app now uses a different approach
+that's **genuinely free and works today, zero signup required**:
+
+- After a customer places an order, they see a **"Get my receipt on
+  WhatsApp"** button.
+- Tapping it opens WhatsApp with the full itemized receipt already
+  typed into a chat with the restaurant's own WhatsApp number — they
+  just tap Send.
+- That one tap does two things at once: the customer keeps their
+  receipt in their own WhatsApp chat history, and the restaurant gains
+  that customer's number as a real contact for future offers — the
+  same end goal as automatic sending, just requiring one tap instead
+  of firing silently.
+
+**The honest limitation:** this can't happen without the customer
+tapping something — true zero-touch automation still needs the Meta
+API. If getting Meta approval is worth it to you later, swap out
+`buildWhatsAppReceiptLink()` in `js/supabaseClient.js` for a real API
+call — the rest of the app doesn't need to change, since every call
+site just expects a link back.
+
+**Setup:** the restaurant's own WhatsApp number lives in the
+`restaurants` table, column `whatsapp_number` — set it in Supabase's
+Table Editor (digits only, with country code, no `+` or spaces, e.g.
+`923001234567`). The demo data already has a placeholder number so you
+can see the button working immediately.
+
 ## Adding your own restaurant instead of the demo one
 
 In Supabase's **Table Editor**:
@@ -121,22 +209,6 @@ on the POS is now stamped with which staff member rang it up.
 Note on security: PINs are stored as plain text in the `staff` table
 for now, matching the "pilot-grade, not production-grade" security
 level described below. Fine for testing; hash them before real rollout.
-
-## WhatsApp receipts
-
-`js/supabaseClient.js` has a `sendWhatsAppReceipt()` function that
-currently just logs to the browser console — it doesn't actually send a
-message yet, because that requires a Meta WhatsApp Business account and
-Meta's template approval process (not something I can set up on your
-behalf). The commented-out code inside that function shows exactly what
-the real API call looks like once you have:
-1. A Meta Business account + WhatsApp Business Cloud API access
-2. An approved message template
-3. Your `WHATSAPP_ACCESS_TOKEN` and `PHONE_NUMBER_ID`
-
-Until then, the order still saves correctly and the on-screen confirmation
-still shows the customer their receipt — only the actual WhatsApp send is
-stubbed out.
 
 ---
 
@@ -171,22 +243,26 @@ scoping. For a single-restaurant pilot, what's here now is solid.
 
 ## What's included vs. what's next
 
-**Working now:** menu browsing, live cart, order creation, order closing
-with payment method, table-based QR ordering, owner dashboard with real
-sales/top-items/order-source queries filtered by day/week/month, staff
-PIN login on both POS and dashboard (role-restricted), a live
-**incoming orders panel on the POS** so staff see QR orders the moment
-a customer places one (updates every 6 seconds, with buttons to move an
-order from open → preparing → ready → closed), and a locked-down
-database where writes and staff data only go through safe functions
-instead of open table access.
+**Working now:** menu browsing with dish photos, live cart, order
+creation, order closing with payment method, table-based QR ordering,
+owner dashboard with real sales/top-items/order-source queries filtered
+by day/week/month, staff PIN login on both POS and dashboard
+(role-restricted), a live **incoming orders panel on the POS** so
+staff see QR orders the moment a customer places one, a **live order
+tracker + rotating facts** on the customer's screen after ordering, a
+**QR code generator/printer page**, an **installable POS app** (PWA,
+with a path to a real `.apk` via PWABuilder), a **real, working
+WhatsApp receipt button** (tap-to-send, free, no Meta approval needed),
+and a locked-down database where writes and staff data only go through
+safe functions instead of open table access.
 
-**Stubbed / not yet built:** WhatsApp sending (see above — this one
-depends on you getting Meta Business API access, not on me), kitchen
-display (KDS) screen — note the incoming-orders panel on the POS
-already covers the core of this, a dedicated kitchen-only screen is a
-smaller follow-up, inventory deduction, cash reconciliation UI (table
-exists, no screen yet), CSV menu import wizard, multi-restaurant
-scoping (see security section above), multi-branch view.
+**Stubbed / not yet built:** fully silent/automatic WhatsApp sending
+(possible later via Meta's API once you have approval — see above, not
+required for the current tap-to-send version to work), a dedicated
+kitchen-only display screen (the incoming-orders panel on the POS
+covers the core of this already), inventory deduction, cash
+reconciliation UI (table exists, no screen yet), CSV menu import
+wizard, multi-restaurant PIN scoping (see security section above),
+multi-branch view.
 
 Tell me which of these you want built next and I'll keep going.

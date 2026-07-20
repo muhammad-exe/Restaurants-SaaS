@@ -6,6 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2F5D50">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 </head>
 <body>
 <div class="app">
@@ -185,7 +188,10 @@ function renderGrid() {
   (menu[posCat]?.items || []).forEach((item) => {
     const b = document.createElement("button");
     b.className = "pos-item";
-    b.innerHTML = `<div class="name">${item.name}</div><div class="price">${fmt(item.price)}</div>`;
+    const imgHtml = item.image_url
+      ? `<img src="${item.image_url}" alt="" class="pi-photo" loading="lazy" onerror="this.style.display='none'">`
+      : "";
+    b.innerHTML = `${imgHtml}<div class="name">${item.name}</div><div class="price">${fmt(item.price)}</div>`;
     b.onclick = () => addItem(item);
     wrap.appendChild(b);
   });
@@ -260,6 +266,12 @@ document.getElementById("btn-print").addEventListener("click", async () => {
 });
 
 init();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js").catch(() => {});
+  });
+}
 </script>
 </body>
 </html>

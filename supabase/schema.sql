@@ -181,13 +181,13 @@ declare
   v_tax numeric := 0;
   v_tax_rate numeric;
   v_customer_id uuid;
-  item jsonb;
+  v_item jsonb;
 begin
   select tax_rate into v_tax_rate from restaurants where restaurants.id = p_restaurant_id;
 
-  select sum((item->>'price')::numeric * (item->>'qty')::int)
+  select sum((elem->>'price')::numeric * (elem->>'qty')::int)
     into v_subtotal
-    from jsonb_array_elements(p_items) as item;
+    from jsonb_array_elements(p_items) as elem;
 
   v_tax := round(v_subtotal * v_tax_rate);
 
@@ -202,14 +202,14 @@ begin
   values (p_restaurant_id, p_table_id, p_source, 'open', v_subtotal, v_tax, v_subtotal + v_tax, v_customer_id, p_staff_id)
   returning orders.id into v_order_id;
 
-  for item in select * from jsonb_array_elements(p_items) loop
+  for v_item in select * from jsonb_array_elements(p_items) loop
     insert into order_items (order_id, menu_item_id, name_snapshot, price_snapshot, qty)
     values (
       v_order_id,
-      (item->>'menu_item_id')::uuid,
-      item->>'name',
-      (item->>'price')::numeric,
-      (item->>'qty')::int
+      (v_item->>'menu_item_id')::uuid,
+      v_item->>'name',
+      (v_item->>'price')::numeric,
+      (v_item->>'qty')::int
     );
   end loop;
 
