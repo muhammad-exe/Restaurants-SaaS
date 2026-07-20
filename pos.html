@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cashier POS — Dastarkhwan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">D</div>
+      <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Cashier POS</div></div>
+    </div>
+    <div class="nav-links"></div>
+    <div class="staff-badge" id="staff-badge" style="display:none;"></div>
+  </div>
+
+  <div id="loading" class="loading-msg">Loading menu…</div>
+
+  <div id="pin-gate" class="pin-gate" style="display:none;">
+    <h2>Staff sign-in</h2>
+    <p>Enter your 4-digit PIN to open the till</p>
+    <div class="pin-dots" id="pin-dots">
+      <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+    </div>
+    <div class="pin-pad" id="pin-pad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button class="pin-clear" data-k="clear">Clear</button><button data-k="0">0</button><button data-k="back">&larr;</button>
+    </div>
+    <div class="pin-error" id="pin-error"></div>
+  </div>
+
+  <div id="pos-root" class="pos-shell" style="display:none;">
+    <div>
+      <div class="pos-cats" id="pos-cats"></div>
+      <div class="pos-grid" id="pos-grid"></div>
+      <div class="panel card" style="margin-top:16px;">
+        <h4 style="display:flex; justify-content:space-between; align-items:center;">
+          Incoming orders <span class="muted" style="font-weight:400; font-size:11px;">updates every 6s</span>
+        </h4>
+        <div id="incoming-orders"></div>
+      </div>
+    </div>
+    <div class="pos-order">
+      <h3>New order</h3>
+      <select class="table-select" id="table-select"></select>
+      <div class="order-lines" id="order-lines"></div>
+      <div class="order-totals" id="order-totals"></div>
+      <div class="pay-select" id="pay-select">
+        <button class="active" data-method="cash">Cash</button>
+        <button data-method="card">Card</button>
+        <button data-method="wallet">Wallet</button>
+      </div>
+      <button class="btn-primary" id="btn-print" disabled>Print receipt &amp; close order</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast">Order saved and closed</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script>
+let menu = [];
+let posCat = 0;
+let order = [];
+let payMethod = "cash";
+let tables = [];
+let loggedInStaff = null;
+let pinBuffer = "";
+
+const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
+
+async function init() {
+  const r = await loadRestaurant();
+  if (!r) {
+    document.getElementById("loading").innerHTML =
+      `Could not connect. Check that js/config.js has your real Supabase URL and anon key, and that schema.sql has been run.`;
+    document.getElementById("loading").classList.add("error-msg");
+    return;
+  }
+  document.getElementById("r-name").textContent = r.name;
+  menu = await loadMenu(r.id);
+
+  const { data: tableRows } = await supa.from("restaurant_tables").select("*").eq("restaurant_id", r.id);
+  tables = tableRows || [];
+  const sel = document.getElementById("table-select");
+  sel.innerHTML = tables.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("pin-gate").style.display = "block";
+}
+
+function updatePinDots() {
+  document.querySelectorAll("#pin-dots .pin-dot").forEach((dot, i) => {
+    dot.classList.toggle("filled", i < pinBuffer.length);
+  });
+}
+
+document.getElementById("pin-pad").addEventListener("click", async (e) => {
+  const key = e.target.dataset.k;
+  if (!key) return;
+  document.getElementById("pin-error").textContent = "";
+  if (key === "clear") { pinBuffer = ""; updatePinDots(); return; }
+  if (key === "back") { pinBuffer = pinBuffer.slice(0, -1); updatePinDots(); return; }
+  if (pinBuffer.length >= 4) return;
+  pinBuffer += key;
+  updatePinDots();
+  if (pinBuffer.length === 4) {
+    const staff = await checkStaffPin(CURRENT_RESTAURANT.id, pinBuffer, ["owner", "manager", "cashier", "waiter"]);
+    if (staff) {
+      loggedInStaff = staff;
+      document.getElementById("pin-gate").style.display = "none";
+      document.getElementById("pos-root").style.display = "grid";
+      const badge = document.getElementById("staff-badge");
+      badge.style.display = "flex";
+      badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
+      document.getElementById("btn-logout").onclick = () => window.location.reload();
+      renderCats();
+      renderGrid();
+      renderOrder();
+      pollIncomingOrders();
+      setInterval(pollIncomingOrders, 6000);
+    } else {
+      document.getElementById("pin-error").textContent = "Incorrect PIN — ask your manager if you don't have one yet.";
+      pinBuffer = "";
+      updatePinDots();
+    }
+  }
+});
+
+async function pollIncomingOrders() {
+  const orders = await getOpenOrders(CURRENT_RESTAURANT.id);
+  const wrap = document.getElementById("incoming-orders");
+  if (!orders.length) {
+    wrap.innerHTML = `<div class="muted" style="font-size:12.5px;">No open orders right now.</div>`;
+    return;
+  }
+  wrap.innerHTML = "";
+  orders.forEach((o) => {
+    const itemsText = (o.items || []).map((i) => `${i.qty}x ${i.name}`).join(", ");
+    const row = document.createElement("div");
+    row.className = "order-line";
+    row.style.marginBottom = "8px";
+    const sourceLabel = o.source === "qr" ? "QR order" : "POS";
+    const nextAction = o.status === "open" ? "preparing" : o.status === "preparing" ? "ready" : "closed";
+    const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & paid";
+    row.innerHTML = `<div>
+        <div class="l-name">${o.table_label || "Takeaway"} · ${sourceLabel} · <span style="text-transform:capitalize;">${o.status}</span></div>
+        <div class="l-qty">${itemsText}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="mono" style="font-size:12px;">${fmt(o.total)}</span>
+        <button class="btn-mini" data-id="${o.id}" data-next="${nextAction}">${nextLabel}</button>
+      </div>`;
+    row.querySelector("button").onclick = async (e) => {
+      const next = e.target.dataset.next;
+      await updateOrderStatus(o.id, next, next === "closed" ? "cash" : null);
+      pollIncomingOrders();
+    };
+    wrap.appendChild(row);
+  });
+}
+
+function renderCats() {
+  const wrap = document.getElementById("pos-cats");
+  wrap.innerHTML = "";
+  menu.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.textContent = c.name;
+    if (i === posCat) b.classList.add("active");
+    b.onclick = () => { posCat = i; renderCats(); renderGrid(); };
+    wrap.appendChild(b);
+  });
+}
+
+function renderGrid() {
+  const wrap = document.getElementById("pos-grid");
+  wrap.innerHTML = "";
+  (menu[posCat]?.items || []).forEach((item) => {
+    const b = document.createElement("button");
+    b.className = "pos-item";
+    b.innerHTML = `<div class="name">${item.name}</div><div class="price">${fmt(item.price)}</div>`;
+    b.onclick = () => addItem(item);
+    wrap.appendChild(b);
+  });
+}
+
+function addItem(item) {
+  const line = order.find((l) => l.id === item.id);
+  if (line) line.qty++;
+  else order.push({ id: item.id, name: item.name, price: item.price, qty: 1 });
+  renderOrder();
+}
+
+function removeLine(id) {
+  order = order.filter((l) => l.id !== id);
+  renderOrder();
+}
+
+function renderOrder() {
+  const wrap = document.getElementById("order-lines");
+  const totalsWrap = document.getElementById("order-totals");
+  const printBtn = document.getElementById("btn-print");
+  if (order.length === 0) {
+    wrap.innerHTML = `<div class="muted" style="text-align:center; padding:30px 10px; font-size:13px;">Tap items to add them to the order</div>`;
+    totalsWrap.innerHTML = "";
+    printBtn.disabled = true;
+    return;
+  }
+  wrap.innerHTML = "";
+  order.forEach((l) => {
+    const row = document.createElement("div");
+    row.className = "order-line";
+    row.innerHTML = `<div><div class="l-name">${l.name}</div><div class="l-qty">Qty ${l.qty}</div></div>
+      <div style="display:flex; align-items:center;"><span class="mono" style="font-size:12.5px;">${fmt(l.price * l.qty)}</span>
+      <button class="l-remove">&times;</button></div>`;
+    row.querySelector(".l-remove").onclick = () => removeLine(l.id);
+    wrap.appendChild(row);
+  });
+  const subtotal = order.reduce((s, l) => s + l.price * l.qty, 0);
+  const tax = Math.round(subtotal * CURRENT_RESTAURANT.tax_rate);
+  totalsWrap.innerHTML = `
+    <div class="tot-row"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
+    <div class="tot-row"><span>Tax (${Math.round(CURRENT_RESTAURANT.tax_rate * 100)}%)</span><span>${fmt(tax)}</span></div>
+    <div class="tot-row grand"><span>Total</span><span>${fmt(subtotal + tax)}</span></div>`;
+  printBtn.disabled = false;
+}
+
+document.getElementById("pay-select").addEventListener("click", (e) => {
+  if (e.target.tagName !== "BUTTON") return;
+  document.querySelectorAll("#pay-select button").forEach((b) => b.classList.remove("active"));
+  e.target.classList.add("active");
+  payMethod = e.target.dataset.method;
+});
+
+document.getElementById("btn-print").addEventListener("click", async () => {
+  const tableId = document.getElementById("table-select").value;
+  const created = await createOrder({
+    restaurantId: CURRENT_RESTAURANT.id,
+    tableId,
+    source: "pos",
+    cart: order,
+    staffId: loggedInStaff ? loggedInStaff.id : null,
+  });
+  if (created) {
+    await updateOrderStatus(created.id, "closed", payMethod);
+    const toast = document.getElementById("toast");
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 2200);
+    order = [];
+    renderOrder();
+    pollIncomingOrders();
+  }
+});
+
+init();
+</script>
+</body>
+</html>

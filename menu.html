@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Order — Dastarkhwan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app menu-shell">
+  <div id="loading" class="loading-msg">Loading menu…</div>
+  <div id="menu-root" style="display:none;">
+    <div class="menu-header">
+      <div class="r-name" id="r-name"></div>
+      <div class="r-table" id="r-table"></div>
+    </div>
+    <div class="menu-cats" id="menu-cats"></div>
+    <div class="menu-list" id="menu-list"></div>
+    <div class="cart-bar" id="cart-bar" style="display:none;">
+      <span><span class="cb-count" id="cart-count">0</span>View order</span>
+      <span id="cart-total"></span>
+    </div>
+    <div class="checkout-form" id="checkout-form" style="display:none;">
+      <label style="font-weight:600; color:var(--ink); margin-bottom:6px; display:block;">Your phone number (optional)</label>
+      <input type="tel" id="phone-input" placeholder="03XX XXXXXXX">
+      <label><input type="checkbox" id="opt-in" checked> Keep me updated with occasional offers</label>
+      <button class="btn-primary" id="btn-place-order">Place order</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script>
+let menu = [];
+let menuCat = 0;
+let cart = [];
+let currentTable = null;
+
+const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
+
+function getTableTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("t"); // e.g. menu.html?t=zg-t4
+}
+
+async function init() {
+  const r = await loadRestaurant();
+  if (!r) {
+    document.getElementById("loading").innerHTML =
+      `Could not connect. Check js/config.js has your real Supabase URL and anon key.`;
+    document.getElementById("loading").classList.add("error-msg");
+    return;
+  }
+  document.getElementById("r-name").textContent = r.name;
+
+  const token = getTableTokenFromUrl();
+  if (token) {
+    const { data: table } = await supa
+      .from("restaurant_tables")
+      .select("*")
+      .eq("restaurant_id", r.id)
+      .eq("qr_token", token)
+      .maybeSingle();
+    currentTable = table || null;
+  }
+  document.getElementById("r-table").textContent = currentTable ? `${currentTable.label} · Dine-in` : "Takeaway order";
+
+  menu = await loadMenu(r.id);
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("menu-root").style.display = "block";
+  renderCats();
+  renderList();
+  renderCartBar();
+}
+
+function renderCats() {
+  const wrap = document.getElementById("menu-cats");
+  wrap.innerHTML = "";
+  menu.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.textContent = c.name;
+    if (i === menuCat) b.classList.add("active");
+    b.onclick = () => { menuCat = i; renderCats(); renderList(); };
+    wrap.appendChild(b);
+  });
+}
+
+function renderList() {
+  const wrap = document.getElementById("menu-list");
+  wrap.innerHTML = "";
+  (menu[menuCat]?.items || []).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "menu-card";
+    const imgHtml = item.image_url
+      ? `<img src="${item.image_url}" alt="" class="mc-photo" loading="lazy" onerror="this.style.display='none'">`
+      : `<div class="mc-photo mc-photo-empty"></div>`;
+    row.innerHTML = `${imgHtml}<div class="mc-info"><div class="mc-name">${item.name}</div><div class="mc-price">${fmt(item.price)}</div></div>
+      <button class="mc-add">+</button>`;
+    row.querySelector(".mc-add").onclick = () => addToCart(item);
+    wrap.appendChild(row);
+  });
+}
+
+function addToCart(item) {
+  const line = cart.find((l) => l.id === item.id);
+  if (line) line.qty++;
+  else cart.push({ id: item.id, name: item.name, price: item.price, qty: 1 });
+  renderCartBar();
+}
+
+function renderCartBar() {
+  const bar = document.getElementById("cart-bar");
+  const form = document.getElementById("checkout-form");
+  const count = cart.reduce((s, l) => s + l.qty, 0);
+  if (count === 0) {
+    bar.style.display = "none";
+    form.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  form.style.display = "block";
+  document.getElementById("cart-count").textContent = count;
+  document.getElementById("cart-total").textContent = fmt(cart.reduce((s, l) => s + l.price * l.qty, 0));
+}
+
+document.getElementById("btn-place-order").addEventListener("click", async () => {
+  if (cart.length === 0) return;
+  const phone = document.getElementById("phone-input").value.trim();
+  const optIn = document.getElementById("opt-in").checked;
+  const btn = document.getElementById("btn-place-order");
+  btn.disabled = true;
+  btn.textContent = "Placing order…";
+
+  const order = await createOrder({
+    restaurantId: CURRENT_RESTAURANT.id,
+    tableId: currentTable ? currentTable.id : null,
+    source: "qr",
+    cart,
+    customerPhone: phone || null,
+    marketingOptIn: optIn,
+  });
+
+  if (!order) {
+    btn.disabled = false;
+    btn.textContent = "Place order";
+    alert("Couldn't place the order — please try again or tell the staff.");
+    return;
+  }
+
+  const grand = order.total;
+  const waLink = buildWhatsAppReceiptLink(order, cart);
+
+  document.getElementById("menu-root").innerHTML = `
+    <div class="order-confirm">
+      <div class="oc-check">&#10003;</div>
+      <h4>Order sent to the kitchen</h4>
+      <p class="muted" style="margin-bottom:18px;">${currentTable ? currentTable.label : "Takeaway"} · Order total ${fmt(grand)}</p>
+
+      <div class="oc-tracker" id="oc-tracker"></div>
+
+      <div class="oc-fact-card" id="oc-fact-card"></div>
+
+      ${waLink ? `<a href="${waLink}" target="_blank" rel="noopener" class="oc-wa-btn">
+          <span class="oc-wa-icon">&#9993;</span> Get my receipt on WhatsApp
+        </a>
+        <p class="muted" style="font-size:11px; margin-top:8px;">Opens WhatsApp with your receipt ready to send — one tap.</p>`
+      : `<p class="muted" style="font-size:12px; margin-top:16px;">WhatsApp receipts aren't set up for this restaurant yet.</p>`}
+    </div>`;
+
+  startOrderTracking(order.id);
+  startFactCarousel();
+});
+
+const WAIT_FACTS = [
+  "Biryani gets its layered flavor from cooking rice and meat separately before combining them — a technique called \"dum.\"",
+  "Seekh kebabs are named for the skewer they're grilled on — \"seekh\" literally means skewer.",
+  "A good karahi is traditionally cooked in the same wide, thick pan it's served in — that's where the dish gets its name.",
+  "Nihari was originally a breakfast dish for Mughal nobility, slow-cooked overnight so it was ready by morning.",
+  "Lassi has been a South Asian favorite for centuries — one of the earliest known yogurt-based drinks in the world.",
+  "Naan is traditionally baked on the inside wall of a tandoor, not on a flat surface — that's what gives it its char and shape.",
+];
+
+let factIndex = 0;
+let factTimer = null;
+function startFactCarousel() {
+  const card = document.getElementById("oc-fact-card");
+  const render = () => {
+    card.style.opacity = 0;
+    setTimeout(() => {
+      card.innerHTML = `<div class="oc-fact-label">While you wait</div><div class="oc-fact-text">${WAIT_FACTS[factIndex]}</div>`;
+      card.style.opacity = 1;
+      factIndex = (factIndex + 1) % WAIT_FACTS.length;
+    }, 200);
+  };
+  render();
+  factTimer = setInterval(render, 6000);
+}
+
+const STATUS_STEPS = [
+  { key: "open", label: "Order received" },
+  { key: "preparing", label: "Preparing" },
+  { key: "ready", label: "Ready" },
+  { key: "closed", label: "Complete" },
+];
+
+let statusTimer = null;
+function renderTracker(currentStatus) {
+  const idx = Math.max(0, STATUS_STEPS.findIndex((s) => s.key === currentStatus));
+  const wrap = document.getElementById("oc-tracker");
+  wrap.innerHTML = STATUS_STEPS.map((s, i) => `
+    <div class="oc-step ${i <= idx ? "done" : ""} ${i === idx ? "current" : ""}">
+      <div class="oc-dot"></div>
+      <div class="oc-step-label">${s.label}</div>
+    </div>`).join("");
+}
+
+function startOrderTracking(orderId) {
+  renderTracker("open");
+  statusTimer = setInterval(async () => {
+    const s = await getOrderStatus(orderId);
+    if (!s) return;
+    renderTracker(s.status);
+    if (s.status === "closed") clearInterval(statusTimer);
+  }, 4000);
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard — Dastarkhwan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">D</div>
+      <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Owner dashboard</div></div>
+    </div>
+    <div class="nav-links">
+      <a href="pos.html">Cashier POS</a>
+      <a href="menu.html">Customer menu</a>
+      <a href="qr-codes.html">Table QR codes</a>
+    </div>
+    <div class="staff-badge" id="staff-badge" style="display:none;"></div>
+  </div>
+
+  <div id="loading" class="loading-msg">Loading sales data…</div>
+
+  <div id="pin-gate" class="pin-gate" style="display:none;">
+    <h2>Owner sign-in</h2>
+    <p>This dashboard is restricted to owners and managers</p>
+    <div class="pin-dots" id="pin-dots">
+      <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+    </div>
+    <div class="pin-pad" id="pin-pad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button class="pin-clear" data-k="clear">Clear</button><button data-k="0">0</button><button data-k="back">&larr;</button>
+    </div>
+    <div class="pin-error" id="pin-error"></div>
+  </div>
+
+  <div id="dash-root" style="display:none;">
+    <div class="dash-head">
+      <h2>Sales summary</h2>
+      <div class="period-toggle" id="period-toggle">
+        <button class="active" data-period="1">Today</button>
+        <button data-period="7">This week</button>
+        <button data-period="30">This month</button>
+      </div>
+    </div>
+    <div class="stat-grid" id="stat-grid"></div>
+    <div class="dash-grid">
+      <div class="panel card">
+        <h4>Top selling items</h4>
+        <div id="top-items"></div>
+      </div>
+      <div class="panel card">
+        <h4>Orders by source</h4>
+        <div id="source-split"></div>
+      </div>
+    </div>
+    <div class="panel card">
+      <h4>Recent orders</h4>
+      <div id="recent-orders"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script>
+const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
+let pinBuffer = "";
+
+async function init() {
+  const r = await loadRestaurant();
+  if (!r) {
+    document.getElementById("loading").innerHTML =
+      `Could not connect. Check js/config.js has your real Supabase URL and anon key.`;
+    document.getElementById("loading").classList.add("error-msg");
+    return;
+  }
+  document.getElementById("r-name").textContent = r.name;
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("pin-gate").style.display = "block";
+}
+
+function updatePinDots() {
+  document.querySelectorAll("#pin-dots .pin-dot").forEach((dot, i) => {
+    dot.classList.toggle("filled", i < pinBuffer.length);
+  });
+}
+
+document.getElementById("pin-pad").addEventListener("click", async (e) => {
+  const key = e.target.dataset.k;
+  if (!key) return;
+  document.getElementById("pin-error").textContent = "";
+  if (key === "clear") { pinBuffer = ""; updatePinDots(); return; }
+  if (key === "back") { pinBuffer = pinBuffer.slice(0, -1); updatePinDots(); return; }
+  if (pinBuffer.length >= 4) return;
+  pinBuffer += key;
+  updatePinDots();
+  if (pinBuffer.length === 4) {
+    const staff = await checkStaffPin(CURRENT_RESTAURANT.id, pinBuffer, ["owner", "manager"]);
+    if (staff) {
+      document.getElementById("pin-gate").style.display = "none";
+      document.getElementById("dash-root").style.display = "block";
+      const badge = document.getElementById("staff-badge");
+      badge.style.display = "flex";
+      badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
+      document.getElementById("btn-logout").onclick = () => window.location.reload();
+      await renderPeriod(1);
+    } else {
+      document.getElementById("pin-error").textContent = "Incorrect PIN, or this PIN isn't an owner/manager account.";
+      pinBuffer = "";
+      updatePinDots();
+    }
+  }
+});
+
+document.getElementById("period-toggle").addEventListener("click", (e) => {
+  if (e.target.tagName !== "BUTTON") return;
+  document.querySelectorAll("#period-toggle button").forEach((b) => b.classList.remove("active"));
+  e.target.classList.add("active");
+  renderPeriod(Number(e.target.dataset.period));
+});
+
+async function renderPeriod(days) {
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const sinceIso = since.toISOString();
+
+  const [summary, topItems, sourceSplitRows, recent] = await Promise.all([
+    getSalesSummary(CURRENT_RESTAURANT.id, sinceIso),
+    getTopItems(CURRENT_RESTAURANT.id, sinceIso, 5),
+    getSourceSplit(CURRENT_RESTAURANT.id, sinceIso),
+    getRecentOrders(CURRENT_RESTAURANT.id, sinceIso, 8),
+  ]);
+
+  const totalSales = Number(summary.total_sales) || 0;
+  const orderCount = Number(summary.order_count) || 0;
+  const avgOrder = Number(summary.avg_order) || 0;
+
+  const sourceTally = { pos: 0, qr: 0 };
+  sourceSplitRows.forEach((row) => { sourceTally[row.source] = Number(row.order_count); });
+
+  document.getElementById("stat-grid").innerHTML = `
+    <div class="stat-card card"><div class="s-label">Total sales</div><div class="s-value">${fmt(totalSales)}</div></div>
+    <div class="stat-card card"><div class="s-label">Orders</div><div class="s-value">${orderCount}</div></div>
+    <div class="stat-card card"><div class="s-label">Avg order value</div><div class="s-value">${fmt(avgOrder)}</div></div>
+    <div class="stat-card card"><div class="s-label">Best seller</div><div class="s-value" style="font-size:16px;">${topItems[0] ? topItems[0].name : "—"}</div></div>`;
+
+  const topWrap = document.getElementById("top-items");
+  topWrap.innerHTML = topItems.length
+    ? topItems.map((t, i) => `<div class="top-item-row"><span class="ti-rank">${i + 1}</span><span class="ti-name">${t.name}</span><span class="ti-val">${t.qty} sold</span></div>`).join("")
+    : `<div class="muted" style="font-size:13px;">No closed orders in this period yet.</div>`;
+
+  const sourceWrap = document.getElementById("source-split");
+  sourceWrap.innerHTML = `
+    <div class="top-item-row"><span class="ti-name">Cashier POS</span><span class="ti-val">${sourceTally.pos || 0} orders</span></div>
+    <div class="top-item-row"><span class="ti-name">Customer QR</span><span class="ti-val">${sourceTally.qr || 0} orders</span></div>`;
+
+  const recentWrap = document.getElementById("recent-orders");
+  recentWrap.innerHTML = recent.length
+    ? recent.map((o) => `<div class="top-item-row">
+        <span class="ti-name">${new Date(o.created_at).toLocaleString()} · ${o.source === "qr" ? "QR order" : "POS"}</span>
+        <span class="ti-val">${fmt(o.total)}</span>
+      </div>`).join("")
+    : `<div class="muted" style="font-size:13px;">No orders yet — take one on the POS or place one from the customer menu to see it here.</div>`;
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Table QR codes — Dastarkhwan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .setup-bar{display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:24px; background:var(--paper-2); padding:16px; border-radius:12px;}
+  .setup-bar .field{flex:1; min-width:220px;}
+  .setup-bar label{font-size:12px; color:#8B8474; font-weight:600; display:block; margin-bottom:6px;}
+  .setup-bar input{width:100%; padding:9px; border-radius:8px; border:1px solid var(--line); font-family:var(--font-mono); font-size:12.5px;}
+  .setup-bar button{background:var(--accent); color:var(--white); border:none; border-radius:8px; padding:10px 18px; font-weight:600; font-size:13px; white-space:nowrap;}
+  .qr-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:18px;}
+  .qr-card{background:var(--white); border:1px solid var(--line); border-radius:12px; padding:20px; text-align:center;}
+  .qr-card .qr-box{width:170px; height:170px; margin:0 auto 14px; display:flex; align-items:center; justify-content:center;}
+  .qr-card .qr-label{font-family:var(--font-display); font-size:16px; font-weight:600; margin-bottom:4px;}
+  .qr-card .qr-url{font-family:var(--font-mono); font-size:10.5px; color:#8B8474; word-break:break-all;}
+  .print-hint{font-size:12px; color:#8B8474; margin-bottom:16px;}
+
+  @media print {
+    .topbar, .setup-bar, .print-hint, .no-print{display:none !important;}
+    .qr-grid{grid-template-columns:repeat(2, 1fr);}
+    .qr-card{break-inside:avoid; border:1px dashed #999;}
+    body{background:#fff;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">D</div>
+      <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Table QR codes</div></div>
+    </div>
+    <div class="nav-links no-print">
+      <a href="dashboard.html">Owner dashboard</a>
+    </div>
+  </div>
+
+  <div id="loading" class="loading-msg">Loading tables…</div>
+
+  <div id="qr-root" style="display:none;">
+    <div class="setup-bar">
+      <div class="field">
+        <label>Your live app URL (from Vercel)</label>
+        <input type="text" id="base-url" placeholder="https://your-app.vercel.app" value="">
+      </div>
+      <button id="btn-generate">Generate QR codes</button>
+    </div>
+    <p class="print-hint no-print">Once these look right, use your browser's Print (Ctrl/Cmd+P) to print them — each card is sized to cut out and put on a table.</p>
+    <div class="qr-grid" id="qr-grid"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script>
+let tables = [];
+
+async function init() {
+  const r = await loadRestaurant();
+  if (!r) {
+    document.getElementById("loading").innerHTML =
+      `Could not connect. Check js/config.js has your real Supabase URL and anon key.`;
+    document.getElementById("loading").classList.add("error-msg");
+    return;
+  }
+  document.getElementById("r-name").textContent = r.name;
+
+  const { data: tableRows } = await supa.from("restaurant_tables").select("*").eq("restaurant_id", r.id).order("label");
+  tables = tableRows || [];
+
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("qr-root").style.display = "block";
+
+  const saved = localStorage.getItem("dastarkhwan_base_url");
+  if (saved) document.getElementById("base-url").value = saved;
+  renderQrCodes();
+}
+
+function renderQrCodes() {
+  const baseUrl = document.getElementById("base-url").value.trim().replace(/\/$/, "");
+  const grid = document.getElementById("qr-grid");
+  grid.innerHTML = "";
+
+  if (!tables.length) {
+    grid.innerHTML = `<div class="muted">No tables found — add rows to restaurant_tables in Supabase's Table Editor first.</div>`;
+    return;
+  }
+
+  tables.forEach((t) => {
+    const url = baseUrl
+      ? `${baseUrl}/menu.html?t=${t.qr_token}`
+      : `${window.location.origin}${window.location.pathname.replace("qr-codes.html", "")}menu.html?t=${t.qr_token}`;
+
+    const card = document.createElement("div");
+    card.className = "qr-card";
+    card.innerHTML = `<div class="qr-box" id="qr-${t.qr_token}"></div>
+      <div class="qr-label">${t.label}</div>
+      <div class="qr-url">${url}</div>`;
+    grid.appendChild(card);
+
+    new QRCode(document.getElementById(`qr-${t.qr_token}`), {
+      text: url,
+      width: 170,
+      height: 170,
+      colorDark: "#211F1B",
+      colorLight: "#ffffff",
+    });
+  });
+}
+
+document.getElementById("btn-generate").addEventListener("click", () => {
+  const baseUrl = document.getElementById("base-url").value.trim();
+  localStorage.setItem("dastarkhwan_base_url", baseUrl);
+  renderQrCodes();
+});
+
+init();
+</script>
+</body>
+</html>
