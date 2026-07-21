@@ -14,13 +14,17 @@
     <div class="menu-header">
       <div class="r-name" id="r-name"></div>
       <div class="r-table" id="r-table"></div>
+      <button class="call-waiter-btn" id="btn-call-waiter">&#128276; Call waiter</button>
     </div>
     <div class="menu-cats" id="menu-cats"></div>
     <div class="menu-list" id="menu-list"></div>
+
     <div class="cart-bar" id="cart-bar" style="display:none;">
       <span><span class="cb-count" id="cart-count">0</span>View order</span>
       <span id="cart-total"></span>
     </div>
+    <div class="cart-detail" id="cart-detail" style="display:none;"></div>
+
     <div class="checkout-form" id="checkout-form" style="display:none;">
       <label style="font-weight:600; color:var(--ink); margin-bottom:6px; display:block;">Your phone number (optional)</label>
       <input type="tel" id="phone-input" placeholder="03XX XXXXXXX">
@@ -29,6 +33,7 @@
     </div>
   </div>
 </div>
+<div class="toast" id="call-toast">Waiter has been called</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="js/config.js"></script>
@@ -38,6 +43,7 @@ let menu = [];
 let menuCat = 0;
 let cart = [];
 let currentTable = null;
+let cartDetailOpen = false;
 
 const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
 
@@ -67,6 +73,19 @@ async function init() {
     currentTable = table || null;
   }
   document.getElementById("r-table").textContent = currentTable ? `${currentTable.label} · Dine-in` : "Takeaway order";
+
+  // If this table already has an order in progress (customer scanned
+  // again after closing the tab, or after placing an order earlier),
+  // jump straight back to the live tracker instead of the menu.
+  if (currentTable) {
+    const active = await getActiveOrderForTable(currentTable.id);
+    if (active) {
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("menu-root").style.display = "block";
+      renderOrderConfirmation(active, active.items || []);
+      return;
+    }
+  }
 
   menu = await loadMenu(r.id);
   document.getElementById("loading").style.display = "none";
@@ -109,15 +128,28 @@ function addToCart(item) {
   if (line) line.qty++;
   else cart.push({ id: item.id, name: item.name, price: item.price, qty: 1 });
   renderCartBar();
+  if (cartDetailOpen) renderCartDetail();
+}
+
+function changeQty(itemId, delta) {
+  const line = cart.find((l) => l.id === itemId);
+  if (!line) return;
+  line.qty += delta;
+  if (line.qty <= 0) cart = cart.filter((l) => l.id !== itemId);
+  renderCartBar();
+  renderCartDetail();
 }
 
 function renderCartBar() {
   const bar = document.getElementById("cart-bar");
   const form = document.getElementById("checkout-form");
+  const detail = document.getElementById("cart-detail");
   const count = cart.reduce((s, l) => s + l.qty, 0);
   if (count === 0) {
     bar.style.display = "none";
     form.style.display = "none";
+    detail.style.display = "none";
+    cartDetailOpen = false;
     return;
   }
   bar.style.display = "flex";
@@ -125,6 +157,55 @@ function renderCartBar() {
   document.getElementById("cart-count").textContent = count;
   document.getElementById("cart-total").textContent = fmt(cart.reduce((s, l) => s + l.price * l.qty, 0));
 }
+
+function renderCartDetail() {
+  const detail = document.getElementById("cart-detail");
+  if (cart.length === 0) {
+    detail.style.display = "none";
+    cartDetailOpen = false;
+    return;
+  }
+  detail.style.display = "block";
+  detail.innerHTML = cart.map((l) => `
+    <div class="cart-line">
+      <div class="cart-line-name">${l.name}</div>
+      <div class="cart-line-controls">
+        <button class="qty-btn" data-id="${l.id}" data-delta="-1">&minus;</button>
+        <span class="qty-num">${l.qty}</span>
+        <button class="qty-btn" data-id="${l.id}" data-delta="1">+</button>
+        <span class="cart-line-price">${fmt(l.price * l.qty)}</span>
+        <button class="cart-line-remove" data-id="${l.id}">Remove</button>
+      </div>
+    </div>`).join("");
+
+  detail.querySelectorAll(".qty-btn").forEach((btn) => {
+    btn.onclick = () => changeQty(btn.dataset.id, Number(btn.dataset.delta));
+  });
+  detail.querySelectorAll(".cart-line-remove").forEach((btn) => {
+    btn.onclick = () => {
+      cart = cart.filter((l) => l.id !== btn.dataset.id);
+      renderCartBar();
+      renderCartDetail();
+    };
+  });
+}
+
+document.getElementById("cart-bar").addEventListener("click", () => {
+  cartDetailOpen = !cartDetailOpen;
+  if (cartDetailOpen) renderCartDetail();
+  else document.getElementById("cart-detail").style.display = "none";
+});
+
+document.getElementById("btn-call-waiter").addEventListener("click", async () => {
+  if (!currentTable) return;
+  const btn = document.getElementById("btn-call-waiter");
+  btn.disabled = true;
+  await ringBell(CURRENT_RESTAURANT.id, currentTable.id);
+  const toast = document.getElementById("call-toast");
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 2200);
+  setTimeout(() => { btn.disabled = false; }, 15000); // avoid accidental spamming
+});
 
 document.getElementById("btn-place-order").addEventListener("click", async () => {
   if (cart.length === 0) return;
@@ -150,8 +231,12 @@ document.getElementById("btn-place-order").addEventListener("click", async () =>
     return;
   }
 
+  renderOrderConfirmation(order, cart);
+});
+
+function renderOrderConfirmation(order, cartItems) {
   const grand = order.total;
-  const waLink = buildWhatsAppReceiptLink(order, cart);
+  const waLink = buildWhatsAppReceiptLink(order, cartItems);
 
   document.getElementById("menu-root").innerHTML = `
     <div class="order-confirm">
@@ -170,9 +255,9 @@ document.getElementById("btn-place-order").addEventListener("click", async () =>
       : `<p class="muted" style="font-size:12px; margin-top:16px;">WhatsApp receipts aren't set up for this restaurant yet.</p>`}
     </div>`;
 
-  startOrderTracking(order.id);
+  startOrderTracking(order.id, order.status);
   startFactCarousel();
-});
+}
 
 const WAIT_FACTS = [
   "Biryani gets its layered flavor from cooking rice and meat separately before combining them — a technique called \"dum.\"",
@@ -217,8 +302,8 @@ function renderTracker(currentStatus) {
     </div>`).join("");
 }
 
-function startOrderTracking(orderId) {
-  renderTracker("open");
+function startOrderTracking(orderId, initialStatus) {
+  renderTracker(initialStatus || "open");
   statusTimer = setInterval(async () => {
     const s = await getOrderStatus(orderId);
     if (!s) return;

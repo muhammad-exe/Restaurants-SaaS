@@ -126,6 +126,29 @@ async function getRecentOrders(restaurantId, since, limit = 8) {
   return data;
 }
 
+async function ringBell(restaurantId, tableId) {
+  const { data, error } = await supa.rpc("ring_bell", { p_restaurant_id: restaurantId, p_table_id: tableId });
+  if (error) { console.error(error); return null; }
+  return data;
+}
+
+async function getActiveCalls(restaurantId) {
+  const { data, error } = await supa.rpc("get_active_calls", { p_restaurant_id: restaurantId });
+  if (error) { console.error(error); return []; }
+  return data;
+}
+
+async function acknowledgeCalls(tableId, staffId) {
+  const { error } = await supa.rpc("acknowledge_calls", { p_table_id: tableId, p_staff_id: staffId || null });
+  if (error) console.error(error);
+}
+
+async function getActiveOrderForTable(tableId) {
+  const { data, error } = await supa.rpc("get_active_order_for_table", { p_table_id: tableId });
+  if (error || !data || data.length === 0) return null;
+  return data[0];
+}
+
 async function getOrderStatus(orderId) {
   const { data, error } = await supa.rpc("get_order_status", { p_order_id: orderId });
   if (error || !data || data.length === 0) return null;
@@ -141,6 +164,17 @@ async function listStaff(restaurantId) {
 async function addStaff(restaurantId, name, pin, role) {
   const { data, error } = await supa.rpc("add_staff", {
     p_restaurant_id: restaurantId,
+    p_name: name,
+    p_pin: pin,
+    p_role: role,
+  });
+  if (error) return { error: error.message };
+  return { data: data[0] };
+}
+
+async function updateStaff(staffId, name, pin, role) {
+  const { data, error } = await supa.rpc("update_staff", {
+    p_staff_id: staffId,
     p_name: name,
     p_pin: pin,
     p_role: role,

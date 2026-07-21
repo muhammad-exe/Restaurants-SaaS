@@ -18,6 +18,7 @@
       <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Cashier POS</div></div>
     </div>
     <div class="nav-links"></div>
+    <button class="bell-btn" id="bell-btn" style="display:none;" title="Mute/unmute call alerts">&#128276;</button>
     <div class="staff-badge" id="staff-badge" style="display:none;"></div>
   </div>
 
@@ -40,6 +41,10 @@
 
   <div id="pos-root" class="pos-shell" style="display:none;">
     <div>
+      <div class="panel card" id="calls-panel" style="display:none; margin-bottom:16px; border-color:var(--danger);">
+        <h4 style="color:var(--danger);">&#128276; Tables calling for service</h4>
+        <div id="table-calls"></div>
+      </div>
       <div class="pos-cats" id="pos-cats"></div>
       <div class="pos-grid" id="pos-grid"></div>
       <div class="panel card" style="margin-top:16px;">
@@ -64,6 +69,8 @@
   </div>
 </div>
 <div class="toast" id="toast">Order saved and closed</div>
+
+<div id="receipt-print-area" class="receipt-print-area"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="js/config.js"></script>
@@ -124,11 +131,16 @@ document.getElementById("pin-pad").addEventListener("click", async (e) => {
       badge.style.display = "flex";
       badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
       document.getElementById("btn-logout").onclick = () => window.location.reload();
+      applyRolePermissions(staff.role);
       renderCats();
       renderGrid();
       renderOrder();
       pollIncomingOrders();
       setInterval(pollIncomingOrders, 6000);
+      document.getElementById("bell-btn").style.display = "block";
+      updateBellIcon();
+      pollTableCalls();
+      setInterval(pollTableCalls, 5000);
     } else {
       document.getElementById("pin-error").textContent = "Incorrect PIN — ask your manager if you don't have one yet.";
       pinBuffer = "";
@@ -136,6 +148,99 @@ document.getElementById("pin-pad").addEventListener("click", async (e) => {
     }
   }
 });
+
+function printReceipt({ tableLabel, orderId, items, subtotal, tax, total, paymentMethod }) {
+  const dateStr = new Date().toLocaleString();
+  const shortId = orderId ? orderId.slice(0, 8) : "";
+  const itemRows = items.map((l) =>
+    `<div class="r-item-row"><span class="r-item-name">${l.qty}x ${l.name}</span><span>${fmt(l.price * l.qty)}</span></div>`
+  ).join("");
+
+  document.getElementById("receipt-print-area").innerHTML = `
+    <div class="r-header">
+      <div class="r-name">${CURRENT_RESTAURANT.name}</div>
+      <div class="r-meta">${tableLabel || "Takeaway"}</div>
+      <div class="r-meta">${dateStr}${shortId ? " · #" + shortId : ""}</div>
+    </div>
+    <div class="r-line"></div>
+    ${itemRows}
+    <div class="r-line"></div>
+    <div class="r-totals">
+      <div class="r-item-row"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
+      <div class="r-item-row"><span>Tax</span><span>${fmt(tax)}</span></div>
+      <div class="r-item-row r-grand"><span>Total</span><span>${fmt(total)}</span></div>
+      ${paymentMethod ? `<div class="r-item-row"><span>Paid via</span><span style="text-transform:capitalize;">${paymentMethod}</span></div>` : ""}
+    </div>
+    <div class="r-footer">Thank you for dining with us!</div>`;
+
+  window.print();
+}
+
+// Simple two-tone beep via Web Audio API — no audio file needed, and
+// it works the same way in the website, desktop app, and mobile app.
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 660].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const start = ctx.currentTime + i * 0.18;
+      gain.gain.setValueAtTime(0.001, start);
+      gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.16);
+      osc.start(start);
+      osc.stop(start + 0.18);
+    });
+  } catch (e) { /* audio not available — fine, visual alert still shows */ }
+}
+
+function isBellMuted() {
+  return localStorage.getItem("dastarkhwan_bell_muted") === "true";
+}
+function updateBellIcon() {
+  document.getElementById("bell-btn").textContent = isBellMuted() ? "\u{1F515}" : "\u{1F514}";
+}
+document.getElementById("bell-btn").addEventListener("click", () => {
+  localStorage.setItem("dastarkhwan_bell_muted", (!isBellMuted()).toString());
+  updateBellIcon();
+});
+
+let lastCallCount = 0;
+async function pollTableCalls() {
+  const calls = await getActiveCalls(CURRENT_RESTAURANT.id);
+  const panel = document.getElementById("calls-panel");
+  const wrap = document.getElementById("table-calls");
+
+  if (!calls.length) {
+    panel.style.display = "none";
+    lastCallCount = 0;
+    return;
+  }
+
+  panel.style.display = "block";
+  const totalCalls = calls.reduce((s, c) => s + Number(c.call_count), 0);
+  if (totalCalls > lastCallCount && !isBellMuted()) playBeep();
+  lastCallCount = totalCalls;
+
+  wrap.innerHTML = calls.map((c) => `
+    <div class="order-line" style="margin-bottom:8px; ${c.urgent ? "border-color:var(--danger);" : ""}">
+      <div>
+        <div class="l-name">${c.table_label || "Table"} ${c.urgent ? '<span style="color:var(--danger);">· urgent, rung ' + c.call_count + 'x</span>' : ""}</div>
+        <div class="l-qty">Called ${c.call_count}x, since ${new Date(c.first_called_at).toLocaleTimeString()}</div>
+      </div>
+      <button class="btn-mini" data-table="${c.table_id}">On my way</button>
+    </div>`).join("");
+
+  wrap.querySelectorAll("button").forEach((btn) => {
+    btn.onclick = async () => {
+      await acknowledgeCalls(btn.dataset.table, loggedInStaff ? loggedInStaff.id : null);
+      pollTableCalls();
+    };
+  });
+}
 
 async function pollIncomingOrders() {
   const orders = await getOpenOrders(CURRENT_RESTAURANT.id);
@@ -152,22 +257,53 @@ async function pollIncomingOrders() {
     row.style.marginBottom = "8px";
     const sourceLabel = o.source === "qr" ? "QR order" : "POS";
     const nextAction = o.status === "open" ? "preparing" : o.status === "preparing" ? "ready" : "closed";
-    const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & paid";
+    const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & print receipt";
+    const waiterBlocked = isWaiterMode && nextAction === "closed";
+    const actionHtml = waiterBlocked
+      ? `<span class="muted" style="font-size:11px;">Ask cashier to close</span>`
+      : `<button class="btn-mini" data-id="${o.id}" data-next="${nextAction}">${nextLabel}</button>`;
     row.innerHTML = `<div>
         <div class="l-name">${o.table_label || "Takeaway"} · ${sourceLabel} · <span style="text-transform:capitalize;">${o.status}</span></div>
         <div class="l-qty">${itemsText}</div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="mono" style="font-size:12px;">${fmt(o.total)}</span>
-        <button class="btn-mini" data-id="${o.id}" data-next="${nextAction}">${nextLabel}</button>
+        ${actionHtml}
       </div>`;
+    if (waiterBlocked) return;
     row.querySelector("button").onclick = async (e) => {
       const next = e.target.dataset.next;
       await updateOrderStatus(o.id, next, next === "closed" ? "cash" : null);
+      if (next === "closed") {
+        printReceipt({
+          tableLabel: o.table_label,
+          orderId: o.id,
+          items: o.items || [],
+          subtotal: o.subtotal,
+          tax: o.tax,
+          total: o.total,
+          paymentMethod: "cash",
+        });
+      }
       pollIncomingOrders();
     };
     wrap.appendChild(row);
   });
+}
+
+let isWaiterMode = false;
+
+function applyRolePermissions(role) {
+  isWaiterMode = role === "waiter";
+  const paySelect = document.getElementById("pay-select");
+  const printBtn = document.getElementById("btn-print");
+  if (isWaiterMode) {
+    paySelect.style.display = "none";
+    printBtn.textContent = "Send to kitchen";
+  } else {
+    paySelect.style.display = "flex";
+    printBtn.textContent = "Print receipt & close order";
+  }
 }
 
 function renderCats() {
@@ -247,6 +383,7 @@ document.getElementById("pay-select").addEventListener("click", (e) => {
 
 document.getElementById("btn-print").addEventListener("click", async () => {
   const tableId = document.getElementById("table-select").value;
+  const tableLabel = (tables.find((t) => t.id === tableId) || {}).label;
   const created = await createOrder({
     restaurantId: CURRENT_RESTAURANT.id,
     tableId,
@@ -255,8 +392,25 @@ document.getElementById("btn-print").addEventListener("click", async () => {
     staffId: loggedInStaff ? loggedInStaff.id : null,
   });
   if (created) {
-    await updateOrderStatus(created.id, "closed", payMethod);
     const toast = document.getElementById("toast");
+    if (isWaiterMode) {
+      // Waiters send the order to the kitchen — it stays "open" and shows
+      // up in the incoming-orders queue for a cashier to handle payment
+      // and printing later. No payment is taken here.
+      toast.textContent = "Sent to kitchen";
+    } else {
+      await updateOrderStatus(created.id, "closed", payMethod);
+      printReceipt({
+        tableLabel,
+        orderId: created.id,
+        items: order,
+        subtotal: created.subtotal,
+        tax: created.tax,
+        total: created.total,
+        paymentMethod: payMethod,
+      });
+      toast.textContent = "Order saved and closed";
+    }
     toast.classList.add("show");
     setTimeout(() => toast.classList.remove("show"), 2200);
     order = [];

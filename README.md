@@ -4,7 +4,7 @@ This is a real, working app — not a demo. Order data is saved to an actual
 database, and it will keep working after you close the tab. Total cost to
 run this for your first several restaurants: **$0/month.**
 
-> **Already set up a Supabase project?** Five migration files may apply
+> **Already set up a Supabase project?** Nine migration files may apply
 > to you, run in your Supabase SQL Editor in this order if you haven't
 > already:
 > 1. `supabase/migration_v2_security.sql` — locks down the database (see below)
@@ -12,6 +12,10 @@ run this for your first several restaurants: **$0/month.**
 > 3. `supabase/migration_v4_order_status.sql` — adds the function powering the customer's live order tracker
 > 4. `supabase/migration_v5_whatsapp.sql` — fills in the demo restaurant's WhatsApp number
 > 5. `supabase/migration_v6_fix_create_order.sql` — **fixes a real bug** that broke placing orders ("column reference item is ambiguous") — run this one even if you've already run everything else
+> 6. `supabase/migration_v7_staff_management.sql` — adds the functions powering the new Staff panel on the owner dashboard
+> 7. `supabase/migration_v8_staff_edit.sql` — adds the ability to edit an existing staff member, completing full CRUD
+> 8. `supabase/migration_v9_receipt_printing.sql` — adds per-item pricing to incoming orders, needed for real receipt printing
+> 9. `supabase/migration_v10_ring_bell_and_resume.sql` — adds the call-waiter ring bell system and order-resume-on-rescan
 >
 > All are safe to run more than once and don't touch your existing
 > tables or data.
@@ -91,6 +95,107 @@ time you add a table.
 To add more tables or rename them, edit the `restaurant_tables` table
 directly in Supabase's **Table Editor** — no code needed. Refresh
 `qr-codes.html` afterward and the new table shows up automatically.
+
+## Editable cart on the customer menu
+
+Tapping "View order" on the QR menu now expands a full line-item list —
+each item shows +/− quantity buttons and a Remove button, so a
+customer who tapped the wrong dish (or changes their mind) can fix it
+before placing the order, instead of only being able to add more.
+
+## Call waiter — real ring bell, with escalation
+
+The "Call waiter" button on the customer menu now actually does
+something:
+- It logs a real call to the database (with a 15-second cooldown so
+  one accidental double-tap doesn't spam staff).
+- Staff see it immediately on the POS in a red **"Tables calling for
+  service"** panel, with a beep sound (generated in-browser — no audio
+  file needed, works identically on the website, desktop app, and
+  mobile app) and an **"On my way"** button to dismiss it.
+- Each staff member can mute/unmute the beep for their own device via
+  the 🔔/🔕 icon next to their name — this is per-device, not global,
+  so muting it at the counter doesn't silence it on a waiter's phone.
+- **The customer never gets a mute option** — only staff can mute the
+  alert sound; the call itself always goes through.
+- If a table rings **more than 5 times** without being acknowledged,
+  it's flagged urgent, and a red banner appears on the **owner's**
+  dashboard specifically — this is the escalation path when the floor
+  staff seem to have missed it.
+
+## Order resume — customer accidentally closes the tracker screen
+
+If a customer places an order, then closes the tab or their phone
+locks and they lose the tracker screen, scanning the **same table's
+QR code again** now takes them straight back to their live order
+tracker instead of showing the menu from scratch — as long as that
+order hasn't been closed out yet. No login, no order number to
+remember, just rescan the same code.
+
+## Manager/owner PIN opening the cashier POS — this is correct
+
+If you tried logging into `pos.html` with a manager or owner PIN and
+it opened the full till screen — that's intentional, not a bug. Only
+**waiter** PINs get the restricted "send to kitchen, no payment"
+screen; owner, manager, and cashier all get full POS access, since an
+owner or manager covering a shift should be able to do everything a
+cashier can.
+
+## Role-based POS behavior
+
+The POS screen now looks different depending on who's logged in — same
+app, same URL, no separate builds needed:
+
+- **Waiter** — sees the menu and can build an order, but the button
+  reads **"Send to kitchen"** instead of "Print receipt & close
+  order," and there's no payment method selector. The order goes
+  straight into the incoming-orders queue as `open`, same as a QR
+  order would. In that same queue, a waiter can still move an order
+  through "Start preparing" → "Mark ready" (kitchen coordination), but
+  the final "Close & print receipt" step is replaced with **"Ask
+  cashier to close"** — waiters can't take payment or trigger a print.
+- **Cashier / Manager / Owner** — full access: build orders, take
+  payment, print receipts, close out any order including ones a waiter
+  sent in.
+
+No new database changes were needed for this — it's driven entirely
+by the `role` value already returned from the PIN check, applied in
+`pos.html`'s `applyRolePermissions()` function.
+
+## Receipt printing — how it actually works now
+
+Clicking **"Print receipt & close order"** (or **"Close & print receipt"**
+on an incoming QR order) now triggers a real browser print, formatted
+to look like an actual thermal receipt — 80mm width, monospace, dashed
+section dividers, itemized lines, totals, "Thank you" footer — instead
+of just closing the order silently.
+
+**How to actually connect a printer:**
+1. Connect your thermal receipt printer to the till's computer/tablet
+   the normal way (USB, or Bluetooth pairing in Windows/Android
+   settings) — most receipt printers install as a regular system
+   printer once connected, even though they print narrow receipt paper
+   instead of full sheets.
+2. The first time you click print in the app, your browser's print
+   dialog appears — choose that printer from the list.
+3. Most browsers let you set it as the **default printer for this
+   site**, so future clicks skip the dialog and print straight away.
+
+**Why this approach instead of raw ESC/POS commands:** sending raw
+printer commands (via Web Bluetooth or Web USB) only works in specific
+browsers, needs a pairing permission dialog nearly every session, and
+doesn't work at all inside the Capacitor mobile app's webview. Using
+the browser's own print function works with virtually any printer
+already set up on the device, works identically in the website, the
+desktop Electron app, and the mobile app, and needs zero extra
+software. The trade-off: it can't automatically pop the cash drawer or
+control paper-cut hardware the way raw ESC/POS commands sometimes can
+— if a specific printer model needs that, tell me which model and I
+can look into a targeted integration for it.
+
+**Paper width:** set to 80mm (the most common size) in
+`css/style.css` — search for `@page` and `.receipt-print-area` if your
+printer uses 58mm paper instead; it's a couple of number changes.
 
 ## Menu photos
 
@@ -243,18 +348,23 @@ scoping. For a single-restaurant pilot, what's here now is solid.
 
 ## What's included vs. what's next
 
-**Working now:** menu browsing with dish photos, live cart, order
-creation, order closing with payment method, table-based QR ordering,
-owner dashboard with real sales/top-items/order-source queries filtered
-by day/week/month, staff PIN login on both POS and dashboard
-(role-restricted), a live **incoming orders panel on the POS** so
-staff see QR orders the moment a customer places one, a **live order
-tracker + rotating facts** on the customer's screen after ordering, a
-**QR code generator/printer page**, an **installable POS app** (PWA,
-with a path to a real `.apk` via PWABuilder), a **real, working
-WhatsApp receipt button** (tap-to-send, free, no Meta approval needed),
-and a locked-down database where writes and staff data only go through
-safe functions instead of open table access.
+**Working now:** menu browsing with dish photos, an **editable cart**
+(add/adjust/remove before ordering), order creation, order closing
+with payment method, table-based QR ordering, owner dashboard with
+real sales/top-items/order-source queries filtered by day/week/month
+and **auto-refreshing every 20 seconds**, staff PIN login on both POS
+and dashboard (role-restricted, full CRUD via the Staff panel), a live
+**incoming orders panel on the POS**, **role-based POS screens**
+(waiters can't take payment), **real receipt printing**, a **live
+order tracker + rotating facts + resume-on-rescan** on the customer's
+screen, a **real call-waiter ring bell** with staff mute and owner
+escalation past 5 rings, a **QR code generator/printer page**, an
+**installable POS app** (PWA, with a path to a real `.apk` via
+PWABuilder or the Capacitor project in `native/mobile`), a working
+**desktop app** (`native/desktop`), a **real, working WhatsApp receipt
+button** (tap-to-send, free, no Meta approval needed), and a
+locked-down database where writes and staff data only go through safe
+functions instead of open table access.
 
 **Stubbed / not yet built:** fully silent/automatic WhatsApp sending
 (possible later via Meta's API once you have approval — see above, not

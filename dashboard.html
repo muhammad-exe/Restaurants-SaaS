@@ -129,6 +129,9 @@ document.getElementById("pin-pad").addEventListener("click", async (e) => {
       document.getElementById("btn-logout").onclick = () => window.location.reload();
       await renderPeriod(1);
       await renderStaffList();
+      setInterval(() => renderPeriod(currentPeriodDays), 20000);
+      pollUrgentCalls();
+      setInterval(pollUrgentCalls, 8000);
     } else {
       document.getElementById("pin-error").textContent = "Incorrect PIN, or this PIN isn't an owner/manager account.";
       pinBuffer = "";
@@ -137,12 +140,32 @@ document.getElementById("pin-pad").addEventListener("click", async (e) => {
   }
 });
 
+let currentPeriodDays = 1;
+
 document.getElementById("period-toggle").addEventListener("click", (e) => {
   if (e.target.tagName !== "BUTTON") return;
   document.querySelectorAll("#period-toggle button").forEach((b) => b.classList.remove("active"));
   e.target.classList.add("active");
-  renderPeriod(Number(e.target.dataset.period));
+  currentPeriodDays = Number(e.target.dataset.period);
+  renderPeriod(currentPeriodDays);
 });
+
+async function pollUrgentCalls() {
+  const calls = await getActiveCalls(CURRENT_RESTAURANT.id);
+  const urgent = calls.filter((c) => c.urgent);
+  let banner = document.getElementById("urgent-calls-banner");
+  if (!urgent.length) {
+    if (banner) banner.remove();
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "urgent-calls-banner";
+    banner.className = "urgent-banner";
+    document.getElementById("dash-root").prepend(banner);
+  }
+  banner.innerHTML = `&#9888; ${urgent.length} table${urgent.length > 1 ? "s have" : " has"} been ringing repeatedly and hasn't been acknowledged: ${urgent.map((c) => c.table_label).join(", ")}`;
+}
 
 async function renderPeriod(days) {
   const since = new Date();
@@ -192,9 +215,12 @@ async function renderStaffList() {
   const staff = await listStaff(CURRENT_RESTAURANT.id);
   const wrap = document.getElementById("staff-list");
   wrap.innerHTML = staff.length
-    ? staff.map((s) => `<div class="top-item-row">
+    ? staff.map((s) => `<div class="top-item-row" id="staff-row-${s.id}">
         <span class="ti-name">${s.name} <span class="muted" style="text-transform:capitalize; font-size:11px;">· ${s.role}</span></span>
-        <button class="btn-mini" data-remove="${s.id}">Remove</button>
+        <span>
+          <button class="btn-mini" data-edit="${s.id}" data-name="${s.name}" data-role="${s.role}">Edit</button>
+          <button class="btn-mini" data-remove="${s.id}">Remove</button>
+        </span>
       </div>`).join("")
     : `<div class="muted" style="font-size:13px;">No staff added yet.</div>`;
 
@@ -205,6 +231,37 @@ async function renderStaffList() {
       renderStaffList();
     });
   });
+
+  wrap.querySelectorAll("[data-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => startEditStaff(btn.dataset.edit, btn.dataset.name, btn.dataset.role));
+  });
+}
+
+function startEditStaff(id, currentName, currentRole) {
+  const row = document.getElementById(`staff-row-${id}`);
+  row.innerHTML = `
+    <input type="text" class="edit-name" value="${currentName}" style="flex:1; min-width:80px; padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px;">
+    <input type="text" class="edit-pin" placeholder="New 4-digit PIN" maxlength="4" inputmode="numeric" style="width:110px; padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px; font-family:var(--font-mono);">
+    <select class="edit-role" style="padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px;">
+      <option value="cashier" ${currentRole === "cashier" ? "selected" : ""}>Cashier</option>
+      <option value="waiter" ${currentRole === "waiter" ? "selected" : ""}>Waiter</option>
+      <option value="manager" ${currentRole === "manager" ? "selected" : ""}>Manager</option>
+      <option value="owner" ${currentRole === "owner" ? "selected" : ""}>Owner</option>
+    </select>
+    <button class="btn-mini" data-save="${id}">Save</button>
+    <button class="btn-mini" data-cancel="1">Cancel</button>`;
+
+  row.querySelector("[data-cancel]").onclick = () => renderStaffList();
+  row.querySelector("[data-save]").onclick = async () => {
+    const name = row.querySelector(".edit-name").value.trim();
+    const pin = row.querySelector(".edit-pin").value.trim();
+    const role = row.querySelector(".edit-role").value;
+    if (!name) { alert("Name can't be empty."); return; }
+    if (!/^\d{4}$/.test(pin)) { alert("PIN must be exactly 4 digits — enter a PIN to save (re-enter their current one if unchanged)."); return; }
+    const result = await updateStaff(id, name, pin, role);
+    if (result.error) { alert(result.error); return; }
+    renderStaffList();
+  };
 }
 
 document.getElementById("btn-add-staff").addEventListener("click", async () => {
