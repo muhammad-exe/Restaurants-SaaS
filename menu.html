@@ -196,16 +196,19 @@ document.getElementById("cart-bar").addEventListener("click", () => {
   else document.getElementById("cart-detail").style.display = "none";
 });
 
-document.getElementById("btn-call-waiter").addEventListener("click", async () => {
+async function callWaiter(btnId) {
   if (!currentTable) return;
-  const btn = document.getElementById("btn-call-waiter");
+  const btn = document.getElementById(btnId);
+  if (!btn || btn.disabled) return;
   btn.disabled = true;
   await ringBell(CURRENT_RESTAURANT.id, currentTable.id);
   const toast = document.getElementById("call-toast");
   toast.classList.add("show");
   setTimeout(() => toast.classList.remove("show"), 2200);
-  setTimeout(() => { btn.disabled = false; }, 15000); // avoid accidental spamming
-});
+  setTimeout(() => { if (btn) btn.disabled = false; }, 15000); // avoid accidental spamming
+}
+
+document.getElementById("btn-call-waiter").addEventListener("click", () => callWaiter("btn-call-waiter"));
 
 document.getElementById("btn-place-order").addEventListener("click", async () => {
   if (cart.length === 0) return;
@@ -248,12 +251,16 @@ function renderOrderConfirmation(order, cartItems) {
 
       <div class="oc-fact-card" id="oc-fact-card"></div>
 
+      <button class="call-waiter-btn oc-call-waiter" id="btn-call-waiter-tracker">&#128276; Call waiter</button>
+
       ${waLink ? `<a href="${waLink}" target="_blank" rel="noopener" class="oc-wa-btn">
           <span class="oc-wa-icon">&#9993;</span> Get my receipt on WhatsApp
         </a>
         <p class="muted" style="font-size:11px; margin-top:8px;">Opens WhatsApp with your receipt ready to send — one tap.</p>`
       : `<p class="muted" style="font-size:12px; margin-top:16px;">WhatsApp receipts aren't set up for this restaurant yet.</p>`}
     </div>`;
+
+  document.getElementById("btn-call-waiter-tracker").addEventListener("click", () => callWaiter("btn-call-waiter-tracker"));
 
   startOrderTracking(order.id, order.status);
   startFactCarousel();

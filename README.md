@@ -4,7 +4,7 @@ This is a real, working app — not a demo. Order data is saved to an actual
 database, and it will keep working after you close the tab. Total cost to
 run this for your first several restaurants: **$0/month.**
 
-> **Already set up a Supabase project?** Nine migration files may apply
+> **Already set up a Supabase project?** Ten migration files may apply
 > to you, run in your Supabase SQL Editor in this order if you haven't
 > already:
 > 1. `supabase/migration_v2_security.sql` — locks down the database (see below)
@@ -16,6 +16,7 @@ run this for your first several restaurants: **$0/month.**
 > 7. `supabase/migration_v8_staff_edit.sql` — adds the ability to edit an existing staff member, completing full CRUD
 > 8. `supabase/migration_v9_receipt_printing.sql` — adds per-item pricing to incoming orders, needed for real receipt printing
 > 9. `supabase/migration_v10_ring_bell_and_resume.sql` — adds the call-waiter ring bell system and order-resume-on-rescan
+> 10. `supabase/migration_v11_password_login.sql` — **replaces 4-digit PINs with real hashed passwords** — your team's old PINs still work as their password after this runs, nobody gets locked out
 >
 > All are safe to run more than once and don't touch your existing
 > tables or data.
@@ -23,11 +24,11 @@ run this for your first several restaurants: **$0/month.**
 It has three pages:
 - `pos.html` — the cashier screen — now also shows **live incoming
   orders** (including QR orders customers placed themselves), and
-  requires a staff PIN to open.
+  requires a staff password to open.
 - `menu.html` — the customer-facing QR ordering page — no login, this
   one's meant to be open to anyone who scans the table code.
 - `dashboard.html` — the owner's sales dashboard — requires an
-  **owner/manager** PIN specifically; a cashier's PIN won't open it.
+  **owner/manager** account specifically; a cashier's password won't open it.
 
 All three talk to one shared database (Supabase), so an order placed on
 `menu.html` shows up instantly on `dashboard.html` **and** on the
@@ -122,6 +123,12 @@ something:
   it's flagged urgent, and a red banner appears on the **owner's**
   dashboard specifically — this is the escalation path when the floor
   staff seem to have missed it.
+- **Browser sound rule, and how this handles it:** browsers (and
+  mobile webviews) refuse to play any sound until the page has had at
+  least one real tap — otherwise sites could blast audio the instant
+  they load. The beep is "unlocked" the moment staff tap "Sign in" at
+  login, then stays unlocked for the rest of that session, on the
+  website, the desktop app, and the mobile app alike.
 
 ## Order resume — customer accidentally closes the tracker screen
 
@@ -132,14 +139,14 @@ tracker instead of showing the menu from scratch — as long as that
 order hasn't been closed out yet. No login, no order number to
 remember, just rescan the same code.
 
-## Manager/owner PIN opening the cashier POS — this is correct
+## Manager/owner password opening the cashier POS — this is correct
 
-If you tried logging into `pos.html` with a manager or owner PIN and
-it opened the full till screen — that's intentional, not a bug. Only
-**waiter** PINs get the restricted "send to kitchen, no payment"
-screen; owner, manager, and cashier all get full POS access, since an
-owner or manager covering a shift should be able to do everything a
-cashier can.
+If you tried logging into `pos.html` with a manager or owner password
+and it opened the full till screen — that's intentional, not a bug.
+Only **waiter** accounts get the restricted "send to kitchen, no
+payment" screen; owner, manager, and cashier all get full POS access,
+since an owner or manager covering a shift should be able to do
+everything a cashier can.
 
 ## Role-based POS behavior
 
@@ -159,8 +166,8 @@ app, same URL, no separate builds needed:
   sent in.
 
 No new database changes were needed for this — it's driven entirely
-by the `role` value already returned from the PIN check, applied in
-`pos.html`'s `applyRolePermissions()` function.
+by the `role` value already returned from the password check, applied
+in `pos.html`'s `applyRolePermissions()` function.
 
 ## Receipt printing — how it actually works now
 
@@ -295,25 +302,31 @@ Once your on-spot setup wizard exists (see Phase 2 below), you won't need
 to do this by hand — for now, the Table Editor works fine for onboarding
 your first few pilot restaurants.
 
-## Staff PIN login
+## Staff password login
 
-Both `pos.html` and `dashboard.html` now open on a PIN-entry screen —
-no one gets in without a valid staff PIN.
+Both `pos.html` and `dashboard.html` now open on a password sign-in
+screen — a real text password field, not a 4-digit PIN pad.
 
 - **POS** accepts any staff role (owner, manager, cashier, waiter).
-- **Dashboard** only accepts `owner` or `manager` PINs — a cashier's PIN
-  won't open it.
-- The demo data includes two logins: PIN `1234` (Owner — works on both
-  screens) and PIN `1111` (Ali, Cashier — POS only, dashboard will
-  reject it).
+- **Dashboard** only accepts `owner` or `manager` accounts — a
+  cashier's password won't open it.
+- The demo data includes two logins:
+  - **Owner** — password `owner123` — works on both screens
+  - **Ali (Cashier)** — password `cashier123` — POS only, dashboard
+    will reject it
 
-Add, remove, or change staff PINs any time in Supabase's **Table
-Editor** → `staff` table — no code changes needed. Every order created
-on the POS is now stamped with which staff member rang it up.
+Add, remove, or edit staff (including setting their password) from
+the **Staff panel on the owner dashboard** — no code changes, no
+Supabase Table Editor needed. Every order created on the POS is
+stamped with which staff member rang it up.
 
-Note on security: PINs are stored as plain text in the `staff` table
-for now, matching the "pilot-grade, not production-grade" security
-level described below. Fine for testing; hash them before real rollout.
+**Passwords are properly hashed now, not stored in plain text.** This
+uses Postgres's `pgcrypto` extension (bcrypt-style hashing via
+`crypt()`) — the actual password is never stored anywhere, only a
+one-way hash of it, and even a full database leak wouldn't expose
+anyone's real password. This is a genuine security upgrade over the
+original PIN system, not just a longer PIN. Minimum length is 6
+characters.
 
 ---
 
@@ -325,9 +338,11 @@ way it works for every Supabase app. What matters is what that key is
 *allowed to do*, and that's what changed:
 
 - **The `staff` table is not readable at all** through the public key —
-  not even indirectly. PIN checks happen inside a database function
-  (`check_staff_pin`) that never returns the PIN itself, only whether it
-  matched and who it belongs to.
+  not even indirectly. Password checks happen inside a database function
+  (`check_staff_password`) that never returns the password or its hash,
+  only whether it matched and who it belongs to. Passwords themselves
+  are stored as one-way bcrypt-style hashes via Postgres's `pgcrypto`
+  extension, never in plain text.
 - **Orders, order items, customers, cash sessions, and expenses are not
   directly writable** through the public key. Every order is created
   through a `create_order` database function that calculates totals
@@ -336,13 +351,14 @@ way it works for every Supabase app. What matters is what that key is
   key — which is intentional, since the QR menu has to work for a
   customer who isn't logged into anything.
 
-What this does *not* yet cover: one restaurant's staff PIN currently
-only works for that one restaurant because there's only one restaurant
-in your database. The moment you add a second restaurant, you'd want to
-scope each database function so restaurant A's PIN can't touch
-restaurant B's orders. That's the next real step if you're onboarding
-multiple restaurants — tell me when you're there and I'll add that
-scoping. For a single-restaurant pilot, what's here now is solid.
+What this does *not* yet cover: one restaurant's staff password
+currently only works for that one restaurant because there's only one
+restaurant in your database. The moment you add a second restaurant,
+you'd want to scope each database function so restaurant A's staff
+can't touch restaurant B's orders. That's the next real step if you're
+onboarding multiple restaurants — tell me when you're there and I'll
+add that scoping. For a single-restaurant pilot, what's here now is
+solid.
 
 ---
 
@@ -352,19 +368,20 @@ scoping. For a single-restaurant pilot, what's here now is solid.
 (add/adjust/remove before ordering), order creation, order closing
 with payment method, table-based QR ordering, owner dashboard with
 real sales/top-items/order-source queries filtered by day/week/month
-and **auto-refreshing every 20 seconds**, staff PIN login on both POS
-and dashboard (role-restricted, full CRUD via the Staff panel), a live
-**incoming orders panel on the POS**, **role-based POS screens**
-(waiters can't take payment), **real receipt printing**, a **live
-order tracker + rotating facts + resume-on-rescan** on the customer's
-screen, a **real call-waiter ring bell** with staff mute and owner
-escalation past 5 rings, a **QR code generator/printer page**, an
-**installable POS app** (PWA, with a path to a real `.apk` via
-PWABuilder or the Capacitor project in `native/mobile`), a working
-**desktop app** (`native/desktop`), a **real, working WhatsApp receipt
-button** (tap-to-send, free, no Meta approval needed), and a
-locked-down database where writes and staff data only go through safe
-functions instead of open table access.
+and **auto-refreshing every 20 seconds**, **real hashed password
+login** on both POS and dashboard (role-restricted, full CRUD via the
+Staff panel), a live **incoming orders panel on the POS**,
+**role-based POS screens** (waiters can't take payment), **real
+receipt printing**, a **live order tracker + rotating facts +
+resume-on-rescan + a call-waiter button** on the customer's screen, a
+**real call-waiter ring bell that reaches POS and the owner dashboard
+together**, with staff mute and owner escalation past 5 rings, a **QR
+code generator/printer page**, an **installable POS app** (PWA, with
+a path to a real `.apk` via PWABuilder or the Capacitor project in
+`native/mobile`), a working **desktop app** (`native/desktop`), a
+**real, working WhatsApp receipt button** (tap-to-send, free, no Meta
+approval needed), and a locked-down database where writes and staff
+data only go through safe functions instead of open table access.
 
 **Stubbed / not yet built:** fully silent/automatic WhatsApp sending
 (possible later via Meta's API once you have approval — see above, not
@@ -372,7 +389,7 @@ required for the current tap-to-send version to work), a dedicated
 kitchen-only display screen (the incoming-orders panel on the POS
 covers the core of this already), inventory deduction, cash
 reconciliation UI (table exists, no screen yet), CSV menu import
-wizard, multi-restaurant PIN scoping (see security section above),
+wizard, multi-restaurant account scoping (see security section above),
 multi-branch view.
 
 Tell me which of these you want built next and I'll keep going.

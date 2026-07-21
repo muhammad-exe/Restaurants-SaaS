@@ -5,6 +5,7 @@
 -- ============================================================
 
 create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 
 -- ---------- Core tenant ----------
 create table restaurants (
@@ -51,7 +52,7 @@ create table staff (
   id uuid primary key default uuid_generate_v4(),
   restaurant_id uuid references restaurants(id) on delete cascade,
   name text not null,
-  pin text not null,                  -- 4-digit PIN login (see README security note)
+  password_hash text not null,        -- hashed with pgcrypto's crypt()/bf, never stored in plain text
   role text default 'cashier',        -- owner | manager | cashier | waiter | kitchen
   created_at timestamptz default now()
 );
@@ -159,9 +160,12 @@ create policy "public read tables" on restaurant_tables for select using (true);
 -- below, which are SECURITY DEFINER (run as the table owner, bypassing
 -- RLS internally) but each does exactly one narrow, safe thing.
 
--- ---------- Staff PIN check ----------
--- Never returns the pin itself. Only returns id/name/role if it matched.
-create or replace function check_staff_pin(p_restaurant_id uuid, p_pin text, p_allowed_roles text[])
+-- ---------- Staff password check ----------
+-- Never returns the password or its hash. Only returns id/name/role
+-- if a matching, correctly-hashed password was found. Uses pgcrypto's
+-- crypt() to compare against the stored bcrypt hash — the plain-text
+-- password never touches a column, only this one-way comparison.
+create or replace function check_staff_password(p_restaurant_id uuid, p_password text, p_allowed_roles text[])
 returns table (id uuid, name text, role text)
 language plpgsql security definer as $$
 begin
@@ -169,8 +173,9 @@ begin
     select s.id, s.name, s.role
     from staff s
     where s.restaurant_id = p_restaurant_id
-      and s.pin = p_pin
-      and s.role = any(p_allowed_roles);
+      and s.role = any(p_allowed_roles)
+      and crypt(p_password, s.password_hash) = s.password_hash
+    limit 1;
 end;
 $$;
 
@@ -318,7 +323,7 @@ $$;
 
 -- Allow the anon (public) role to call these functions — this is what
 -- actually grants access; the functions themselves stay narrow and safe.
-grant execute on function check_staff_pin to anon;
+grant execute on function check_staff_password to anon;
 grant execute on function create_order to anon;
 grant execute on function update_order_status to anon;
 grant execute on function get_open_orders to anon;
@@ -435,27 +440,30 @@ begin
 end;
 $$;
 
-create or replace function add_staff(p_restaurant_id uuid, p_name text, p_pin text, p_role text)
+create or replace function add_staff(p_restaurant_id uuid, p_name text, p_password text, p_role text)
 returns table (id uuid, name text, role text)
 language plpgsql security definer as $$
 declare
-  v_existing int;
+  v_existing boolean;
 begin
-  if p_pin !~ '^[0-9]{4}$' then
-    raise exception 'PIN must be exactly 4 digits';
+  if length(p_password) < 6 then
+    raise exception 'Password must be at least 6 characters';
   end if;
   if p_role not in ('owner', 'manager', 'cashier', 'waiter') then
     raise exception 'Invalid role';
   end if;
 
-  select count(*) into v_existing from staff s where s.restaurant_id = p_restaurant_id and s.pin = p_pin;
-  if v_existing > 0 then
-    raise exception 'That PIN is already in use — pick a different one';
+  select exists(
+    select 1 from staff s
+    where s.restaurant_id = p_restaurant_id and crypt(p_password, s.password_hash) = s.password_hash
+  ) into v_existing;
+  if v_existing then
+    raise exception 'That password is already in use — pick a different one';
   end if;
 
   return query
-    insert into staff (restaurant_id, name, pin, role)
-    values (p_restaurant_id, p_name, p_pin, p_role)
+    insert into staff (restaurant_id, name, password_hash, role)
+    values (p_restaurant_id, p_name, crypt(p_password, gen_salt('bf')), p_role)
     returning staff.id, staff.name, staff.role;
 end;
 $$;
@@ -471,15 +479,15 @@ $$;
 
 grant execute on function list_staff to anon;
 grant execute on function add_staff to anon;
-create or replace function update_staff(p_staff_id uuid, p_name text, p_pin text, p_role text)
+create or replace function update_staff(p_staff_id uuid, p_name text, p_password text, p_role text)
 returns table (id uuid, name text, role text)
 language plpgsql security definer as $$
 declare
-  v_existing int;
+  v_existing boolean;
   v_restaurant_id uuid;
 begin
-  if p_pin !~ '^[0-9]{4}$' then
-    raise exception 'PIN must be exactly 4 digits';
+  if length(p_password) < 6 then
+    raise exception 'Password must be at least 6 characters';
   end if;
   if p_role not in ('owner', 'manager', 'cashier', 'waiter') then
     raise exception 'Invalid role';
@@ -487,16 +495,18 @@ begin
 
   select restaurant_id into v_restaurant_id from staff where staff.id = p_staff_id;
 
-  select count(*) into v_existing
-    from staff s
-    where s.restaurant_id = v_restaurant_id and s.pin = p_pin and s.id != p_staff_id;
-  if v_existing > 0 then
-    raise exception 'That PIN is already in use by someone else — pick a different one';
+  select exists(
+    select 1 from staff s
+    where s.restaurant_id = v_restaurant_id and s.id != p_staff_id
+      and crypt(p_password, s.password_hash) = s.password_hash
+  ) into v_existing;
+  if v_existing then
+    raise exception 'That password is already in use by someone else — pick a different one';
   end if;
 
   return query
     update staff
-    set name = p_name, pin = p_pin, role = p_role
+    set name = p_name, password_hash = crypt(p_password, gen_salt('bf')), role = p_role
     where staff.id = p_staff_id
     returning staff.id, staff.name, staff.role;
 end;
@@ -518,9 +528,9 @@ insert into restaurant_tables (restaurant_id, label, qr_token) values
 ('11111111-1111-1111-1111-111111111111', 'Table 3', 'zg-t3'),
 ('11111111-1111-1111-1111-111111111111', 'Table 4', 'zg-t4');
 
-insert into staff (restaurant_id, name, pin, role) values
-('11111111-1111-1111-1111-111111111111', 'Owner', '1234', 'owner'),
-('11111111-1111-1111-1111-111111111111', 'Ali (Cashier)', '1111', 'cashier');
+insert into staff (restaurant_id, name, password_hash, role) values
+('11111111-1111-1111-1111-111111111111', 'Owner', crypt('owner123', gen_salt('bf')), 'owner'),
+('11111111-1111-1111-1111-111111111111', 'Ali (Cashier)', crypt('cashier123', gen_salt('bf')), 'cashier');
 
 insert into categories (id, restaurant_id, name, sort_order) values
 ('c1111111-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'Starters', 1),

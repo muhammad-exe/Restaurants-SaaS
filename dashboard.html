@@ -19,6 +19,7 @@
       <a href="menu.html">Customer menu</a>
       <a href="qr-codes.html">Table QR codes</a>
     </div>
+    <button class="bell-btn" id="bell-btn" style="display:none;" title="Mute/unmute call alerts">&#128276;</button>
     <div class="staff-badge" id="staff-badge" style="display:none;"></div>
   </div>
 
@@ -27,19 +28,16 @@
   <div id="pin-gate" class="pin-gate" style="display:none;">
     <h2>Owner sign-in</h2>
     <p>This dashboard is restricted to owners and managers</p>
-    <div class="pin-dots" id="pin-dots">
-      <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
-    </div>
-    <div class="pin-pad" id="pin-pad">
-      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
-      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
-      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-      <button class="pin-clear" data-k="clear">Clear</button><button data-k="0">0</button><button data-k="back">&larr;</button>
-    </div>
+    <input type="password" id="password-input" class="password-input" placeholder="Password" autocomplete="off">
+    <button class="btn-primary" id="btn-login">Sign in</button>
     <div class="pin-error" id="pin-error"></div>
   </div>
 
   <div id="dash-root" style="display:none;">
+    <div class="panel card" id="calls-panel" style="display:none; margin-bottom:16px; border-color:var(--danger);">
+      <h4 style="color:var(--danger);">&#128276; Tables calling for service</h4>
+      <div id="table-calls"></div>
+    </div>
     <div class="dash-head">
       <h2>Sales summary</h2>
       <div class="period-toggle" id="period-toggle">
@@ -69,7 +67,7 @@
       <div id="staff-list"></div>
       <div class="staff-add-form" id="staff-add-form">
         <input type="text" id="staff-name" placeholder="Name">
-        <input type="text" id="staff-pin" placeholder="4-digit PIN" maxlength="4" inputmode="numeric">
+        <input type="password" id="staff-pin" placeholder="Password (min 6 characters)" autocomplete="off">
         <select id="staff-role">
           <option value="cashier">Cashier</option>
           <option value="waiter">Waiter</option>
@@ -88,7 +86,6 @@
 <script src="js/supabaseClient.js"></script>
 <script>
 const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
-let pinBuffer = "";
 
 async function init() {
   const r = await loadRestaurant();
@@ -101,43 +98,41 @@ async function init() {
   document.getElementById("r-name").textContent = r.name;
   document.getElementById("loading").style.display = "none";
   document.getElementById("pin-gate").style.display = "block";
+  document.getElementById("password-input").focus();
 }
 
-function updatePinDots() {
-  document.querySelectorAll("#pin-dots .pin-dot").forEach((dot, i) => {
-    dot.classList.toggle("filled", i < pinBuffer.length);
-  });
-}
-
-document.getElementById("pin-pad").addEventListener("click", async (e) => {
-  const key = e.target.dataset.k;
-  if (!key) return;
+async function attemptLogin() {
+  unlockAudio();
+  const input = document.getElementById("password-input");
+  const password = input.value;
   document.getElementById("pin-error").textContent = "";
-  if (key === "clear") { pinBuffer = ""; updatePinDots(); return; }
-  if (key === "back") { pinBuffer = pinBuffer.slice(0, -1); updatePinDots(); return; }
-  if (pinBuffer.length >= 4) return;
-  pinBuffer += key;
-  updatePinDots();
-  if (pinBuffer.length === 4) {
-    const staff = await checkStaffPin(CURRENT_RESTAURANT.id, pinBuffer, ["owner", "manager"]);
-    if (staff) {
-      document.getElementById("pin-gate").style.display = "none";
-      document.getElementById("dash-root").style.display = "block";
-      const badge = document.getElementById("staff-badge");
-      badge.style.display = "flex";
-      badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
-      document.getElementById("btn-logout").onclick = () => window.location.reload();
-      await renderPeriod(1);
-      await renderStaffList();
-      setInterval(() => renderPeriod(currentPeriodDays), 20000);
-      pollUrgentCalls();
-      setInterval(pollUrgentCalls, 8000);
-    } else {
-      document.getElementById("pin-error").textContent = "Incorrect PIN, or this PIN isn't an owner/manager account.";
-      pinBuffer = "";
-      updatePinDots();
-    }
+  if (!password) return;
+
+  const staff = await checkStaffPassword(CURRENT_RESTAURANT.id, password, ["owner", "manager"]);
+  if (staff) {
+    document.getElementById("pin-gate").style.display = "none";
+    document.getElementById("dash-root").style.display = "block";
+    const badge = document.getElementById("staff-badge");
+    badge.style.display = "flex";
+    badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
+    document.getElementById("btn-logout").onclick = () => window.location.reload();
+    await renderPeriod(1);
+    await renderStaffList();
+    setInterval(() => renderPeriod(currentPeriodDays), 20000);
+    document.getElementById("bell-btn").style.display = "block";
+    updateBellIcon();
+    pollTableCalls();
+    setInterval(pollTableCalls, 5000);
+  } else {
+    document.getElementById("pin-error").textContent = "Incorrect password, or this account isn't an owner/manager.";
+    input.value = "";
+    input.focus();
   }
+}
+
+document.getElementById("btn-login").addEventListener("click", attemptLogin);
+document.getElementById("password-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") attemptLogin();
 });
 
 let currentPeriodDays = 1;
@@ -150,21 +145,72 @@ document.getElementById("period-toggle").addEventListener("click", (e) => {
   renderPeriod(currentPeriodDays);
 });
 
-async function pollUrgentCalls() {
+// Browsers (and mobile webviews) block sound until the page has had a
+// real tap — unlocked the moment the owner/manager taps "Sign in."
+let audioCtx = null;
+function unlockAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) { /* Web Audio not available on this device — beep just won't play */ }
+}
+function playBeep() {
+  if (!audioCtx) return;
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  try {
+    [880, 660].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      const start = audioCtx.currentTime + i * 0.18;
+      gain.gain.setValueAtTime(0.001, start);
+      gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.16);
+      osc.start(start);
+      osc.stop(start + 0.18);
+    });
+  } catch (e) { /* fine — the panel is still visible even if sound fails */ }
+}
+function isBellMuted() { return localStorage.getItem("dastarkhwan_bell_muted") === "true"; }
+function updateBellIcon() { document.getElementById("bell-btn").textContent = isBellMuted() ? "\u{1F515}" : "\u{1F514}"; }
+document.getElementById("bell-btn").addEventListener("click", () => {
+  unlockAudio();
+  localStorage.setItem("dastarkhwan_bell_muted", (!isBellMuted()).toString());
+  updateBellIcon();
+});
+
+let lastCallCount = 0;
+async function pollTableCalls() {
   const calls = await getActiveCalls(CURRENT_RESTAURANT.id);
-  const urgent = calls.filter((c) => c.urgent);
-  let banner = document.getElementById("urgent-calls-banner");
-  if (!urgent.length) {
-    if (banner) banner.remove();
+  const panel = document.getElementById("calls-panel");
+  const wrap = document.getElementById("table-calls");
+
+  if (!calls.length) {
+    panel.style.display = "none";
+    lastCallCount = 0;
     return;
   }
-  if (!banner) {
-    banner = document.createElement("div");
-    banner.id = "urgent-calls-banner";
-    banner.className = "urgent-banner";
-    document.getElementById("dash-root").prepend(banner);
-  }
-  banner.innerHTML = `&#9888; ${urgent.length} table${urgent.length > 1 ? "s have" : " has"} been ringing repeatedly and hasn't been acknowledged: ${urgent.map((c) => c.table_label).join(", ")}`;
+
+  panel.style.display = "block";
+  const totalCalls = calls.reduce((s, c) => s + Number(c.call_count), 0);
+  if (totalCalls > lastCallCount && !isBellMuted()) playBeep();
+  lastCallCount = totalCalls;
+
+  wrap.innerHTML = calls.map((c) => `
+    <div class="top-item-row" style="${c.urgent ? "color:var(--danger);" : ""}">
+      <span class="ti-name">${c.table_label || "Table"} ${c.urgent ? "· urgent, rung " + c.call_count + "x" : "· called " + c.call_count + "x"}</span>
+      <button class="btn-mini" data-table="${c.table_id}">On my way</button>
+    </div>`).join("");
+
+  wrap.querySelectorAll("button").forEach((btn) => {
+    btn.onclick = async () => {
+      await acknowledgeCalls(btn.dataset.table, null);
+      pollTableCalls();
+    };
+  });
 }
 
 async function renderPeriod(days) {
@@ -241,7 +287,7 @@ function startEditStaff(id, currentName, currentRole) {
   const row = document.getElementById(`staff-row-${id}`);
   row.innerHTML = `
     <input type="text" class="edit-name" value="${currentName}" style="flex:1; min-width:80px; padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px;">
-    <input type="text" class="edit-pin" placeholder="New 4-digit PIN" maxlength="4" inputmode="numeric" style="width:110px; padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px; font-family:var(--font-mono);">
+    <input type="password" class="edit-pin" placeholder="New password (min 6 chars)" autocomplete="off" style="width:170px; padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px; font-family:var(--font-mono);">
     <select class="edit-role" style="padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px;">
       <option value="cashier" ${currentRole === "cashier" ? "selected" : ""}>Cashier</option>
       <option value="waiter" ${currentRole === "waiter" ? "selected" : ""}>Waiter</option>
@@ -257,7 +303,7 @@ function startEditStaff(id, currentName, currentRole) {
     const pin = row.querySelector(".edit-pin").value.trim();
     const role = row.querySelector(".edit-role").value;
     if (!name) { alert("Name can't be empty."); return; }
-    if (!/^\d{4}$/.test(pin)) { alert("PIN must be exactly 4 digits — enter a PIN to save (re-enter their current one if unchanged)."); return; }
+    if (pin.length < 6) { alert("Password must be at least 6 characters — enter a password to save (re-enter their current one if unchanged)."); return; }
     const result = await updateStaff(id, name, pin, role);
     if (result.error) { alert(result.error); return; }
     renderStaffList();
@@ -272,7 +318,7 @@ document.getElementById("btn-add-staff").addEventListener("click", async () => {
   errorEl.textContent = "";
 
   if (!name) { errorEl.textContent = "Enter a name."; return; }
-  if (!/^\d{4}$/.test(pin)) { errorEl.textContent = "PIN must be exactly 4 digits."; return; }
+  if (pin.length < 6) { errorEl.textContent = "Password must be at least 6 characters."; return; }
 
   const result = await addStaff(CURRENT_RESTAURANT.id, name, pin, role);
   if (result.error) {

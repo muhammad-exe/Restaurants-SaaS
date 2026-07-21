@@ -90,6 +90,8 @@ button{font-family:var(--font-body); cursor:pointer;}
 .call-waiter-btn{position:absolute; top:14px; right:14px; background:rgba(255,255,255,0.15); color:var(--white); border:none; border-radius:16px; padding:7px 12px; font-size:11px; font-weight:600; cursor:pointer;}
 .call-waiter-btn:hover{background:rgba(255,255,255,0.25);}
 .call-waiter-btn:disabled{opacity:0.5; cursor:default;}
+.oc-call-waiter{position:static; display:inline-block; background:var(--paper-2); color:var(--ink); margin:16px auto 0; border-radius:10px; padding:10px 16px;}
+.oc-call-waiter:hover{background:var(--accent-soft);}
 .menu-header .r-name{font-family:var(--font-display); font-size:19px; font-weight:600;}
 .menu-header .r-table{font-size:12px; opacity:0.85; margin-top:2px;}
 .menu-cats{display:flex; gap:6px; padding:12px 14px; overflow-x:auto; border-bottom:1px solid var(--line); background:var(--white);}
@@ -169,6 +171,8 @@ button{font-family:var(--font-body); cursor:pointer;}
 
 /* ---- PIN login gate ---- */
 .pin-gate{max-width:320px; margin:60px auto; text-align:center;}
+.password-input{width:100%; padding:13px; border-radius:10px; border:1px solid var(--line); font-family:var(--font-body); font-size:15px; margin-bottom:14px; text-align:center;}
+.password-input:focus{outline:none; border-color:var(--accent);}
 .pin-gate h2{font-family:var(--font-display); font-size:20px; margin-bottom:6px;}
 .pin-gate p{font-size:13px; color:#8B8474; margin-bottom:22px;}
 .pin-dots{display:flex; justify-content:center; gap:12px; margin-bottom:20px;}

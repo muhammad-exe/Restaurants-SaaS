@@ -93,12 +93,12 @@ async function getOpenOrders(restaurantId) {
 
 // Checks a PIN via the check_staff_pin() database function. The staff
 // table itself is not directly readable by the anon key — this never
-// exposes PINs, only the matched staff member's id/name/role, and only
-// when the PIN is correct and its role is in allowedRoles.
-async function checkStaffPin(restaurantId, pin, allowedRoles) {
-  const { data, error } = await supa.rpc("check_staff_pin", {
+// exposes passwords, only the matched staff member's id/name/role,
+// and only when the password is correct and its role is in allowedRoles.
+async function checkStaffPassword(restaurantId, password, allowedRoles) {
+  const { data, error } = await supa.rpc("check_staff_password", {
     p_restaurant_id: restaurantId,
-    p_pin: pin,
+    p_password: password,
     p_allowed_roles: allowedRoles,
   });
   if (error || !data || data.length === 0) return null;
@@ -161,22 +161,22 @@ async function listStaff(restaurantId) {
   return data;
 }
 
-async function addStaff(restaurantId, name, pin, role) {
+async function addStaff(restaurantId, name, password, role) {
   const { data, error } = await supa.rpc("add_staff", {
     p_restaurant_id: restaurantId,
     p_name: name,
-    p_pin: pin,
+    p_password: password,
     p_role: role,
   });
   if (error) return { error: error.message };
   return { data: data[0] };
 }
 
-async function updateStaff(staffId, name, pin, role) {
+async function updateStaff(staffId, name, password, role) {
   const { data, error } = await supa.rpc("update_staff", {
     p_staff_id: staffId,
     p_name: name,
-    p_pin: pin,
+    p_password: password,
     p_role: role,
   });
   if (error) return { error: error.message };

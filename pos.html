@@ -26,16 +26,9 @@
 
   <div id="pin-gate" class="pin-gate" style="display:none;">
     <h2>Staff sign-in</h2>
-    <p>Enter your 4-digit PIN to open the till</p>
-    <div class="pin-dots" id="pin-dots">
-      <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
-    </div>
-    <div class="pin-pad" id="pin-pad">
-      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
-      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
-      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-      <button class="pin-clear" data-k="clear">Clear</button><button data-k="0">0</button><button data-k="back">&larr;</button>
-    </div>
+    <p>Enter your password to open the till</p>
+    <input type="password" id="password-input" class="password-input" placeholder="Password" autocomplete="off">
+    <button class="btn-primary" id="btn-login">Sign in</button>
     <div class="pin-error" id="pin-error"></div>
   </div>
 
@@ -82,8 +75,6 @@ let order = [];
 let payMethod = "cash";
 let tables = [];
 let loggedInStaff = null;
-let pinBuffer = "";
-
 const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
 
 async function init() {
@@ -104,49 +95,45 @@ async function init() {
 
   document.getElementById("loading").style.display = "none";
   document.getElementById("pin-gate").style.display = "block";
+  document.getElementById("password-input").focus();
 }
 
-function updatePinDots() {
-  document.querySelectorAll("#pin-dots .pin-dot").forEach((dot, i) => {
-    dot.classList.toggle("filled", i < pinBuffer.length);
-  });
-}
-
-document.getElementById("pin-pad").addEventListener("click", async (e) => {
-  const key = e.target.dataset.k;
-  if (!key) return;
+async function attemptLogin() {
+  unlockAudio();
+  const input = document.getElementById("password-input");
+  const password = input.value;
   document.getElementById("pin-error").textContent = "";
-  if (key === "clear") { pinBuffer = ""; updatePinDots(); return; }
-  if (key === "back") { pinBuffer = pinBuffer.slice(0, -1); updatePinDots(); return; }
-  if (pinBuffer.length >= 4) return;
-  pinBuffer += key;
-  updatePinDots();
-  if (pinBuffer.length === 4) {
-    const staff = await checkStaffPin(CURRENT_RESTAURANT.id, pinBuffer, ["owner", "manager", "cashier", "waiter"]);
-    if (staff) {
-      loggedInStaff = staff;
-      document.getElementById("pin-gate").style.display = "none";
-      document.getElementById("pos-root").style.display = "grid";
-      const badge = document.getElementById("staff-badge");
-      badge.style.display = "flex";
-      badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
-      document.getElementById("btn-logout").onclick = () => window.location.reload();
-      applyRolePermissions(staff.role);
-      renderCats();
-      renderGrid();
-      renderOrder();
-      pollIncomingOrders();
-      setInterval(pollIncomingOrders, 6000);
-      document.getElementById("bell-btn").style.display = "block";
-      updateBellIcon();
-      pollTableCalls();
-      setInterval(pollTableCalls, 5000);
-    } else {
-      document.getElementById("pin-error").textContent = "Incorrect PIN — ask your manager if you don't have one yet.";
-      pinBuffer = "";
-      updatePinDots();
-    }
+  if (!password) return;
+
+  const staff = await checkStaffPassword(CURRENT_RESTAURANT.id, password, ["owner", "manager", "cashier", "waiter"]);
+  if (staff) {
+    loggedInStaff = staff;
+    document.getElementById("pin-gate").style.display = "none";
+    document.getElementById("pos-root").style.display = "grid";
+    const badge = document.getElementById("staff-badge");
+    badge.style.display = "flex";
+    badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
+    document.getElementById("btn-logout").onclick = () => window.location.reload();
+    applyRolePermissions(staff.role);
+    renderCats();
+    renderGrid();
+    renderOrder();
+    pollIncomingOrders();
+    setInterval(pollIncomingOrders, 6000);
+    document.getElementById("bell-btn").style.display = "block";
+    updateBellIcon();
+    pollTableCalls();
+    setInterval(pollTableCalls, 5000);
+  } else {
+    document.getElementById("pin-error").textContent = "Incorrect password — ask your manager if you don't have one yet.";
+    input.value = "";
+    input.focus();
   }
+}
+
+document.getElementById("btn-login").addEventListener("click", attemptLogin);
+document.getElementById("password-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") attemptLogin();
 });
 
 function printReceipt({ tableLabel, orderId, items, subtotal, tax, total, paymentMethod }) {
@@ -176,25 +163,39 @@ function printReceipt({ tableLabel, orderId, items, subtotal, tax, total, paymen
   window.print();
 }
 
-// Simple two-tone beep via Web Audio API — no audio file needed, and
-// it works the same way in the website, desktop app, and mobile app.
-function playBeep() {
+// Browsers (and mobile webviews) block sound until the page has had a
+// real tap/click — a fresh AudioContext created later, with no prior
+// interaction, stays silently "suspended" forever. So we create ONE
+// context and unlock it the moment the user first taps anything (the
+// PIN pad, guaranteed to happen before any bell could ring), then
+// reuse that same unlocked context for every beep afterward.
+let audioCtx = null;
+function unlockAudio() {
+  if (audioCtx) return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) { /* Web Audio not available on this device — beep just won't play */ }
+}
+
+function playBeep() {
+  if (!audioCtx) return;
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  try {
     [880, 660].forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
       osc.frequency.value = freq;
       osc.connect(gain);
-      gain.connect(ctx.destination);
-      const start = ctx.currentTime + i * 0.18;
+      gain.connect(audioCtx.destination);
+      const start = audioCtx.currentTime + i * 0.18;
       gain.gain.setValueAtTime(0.001, start);
       gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.001, start + 0.16);
       osc.start(start);
       osc.stop(start + 0.18);
     });
-  } catch (e) { /* audio not available — fine, visual alert still shows */ }
+  } catch (e) { /* fine — visual alert still shows even if sound fails */ }
 }
 
 function isBellMuted() {
@@ -204,6 +205,7 @@ function updateBellIcon() {
   document.getElementById("bell-btn").textContent = isBellMuted() ? "\u{1F515}" : "\u{1F514}";
 }
 document.getElementById("bell-btn").addEventListener("click", () => {
+  unlockAudio();
   localStorage.setItem("dastarkhwan_bell_muted", (!isBellMuted()).toString());
   updateBellIcon();
 });
