@@ -63,6 +63,23 @@
       <h4>Recent orders</h4>
       <div id="recent-orders"></div>
     </div>
+
+    <div class="panel card" style="margin-top:16px;">
+      <h4>Staff</h4>
+      <div id="staff-list"></div>
+      <div class="staff-add-form" id="staff-add-form">
+        <input type="text" id="staff-name" placeholder="Name">
+        <input type="text" id="staff-pin" placeholder="4-digit PIN" maxlength="4" inputmode="numeric">
+        <select id="staff-role">
+          <option value="cashier">Cashier</option>
+          <option value="waiter">Waiter</option>
+          <option value="manager">Manager</option>
+          <option value="owner">Owner</option>
+        </select>
+        <button id="btn-add-staff">Add staff</button>
+      </div>
+      <div class="staff-error" id="staff-error"></div>
+    </div>
   </div>
 </div>
 
@@ -111,6 +128,7 @@ document.getElementById("pin-pad").addEventListener("click", async (e) => {
       badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
       document.getElementById("btn-logout").onclick = () => window.location.reload();
       await renderPeriod(1);
+      await renderStaffList();
     } else {
       document.getElementById("pin-error").textContent = "Incorrect PIN, or this PIN isn't an owner/manager account.";
       pinBuffer = "";
@@ -169,6 +187,45 @@ async function renderPeriod(days) {
       </div>`).join("")
     : `<div class="muted" style="font-size:13px;">No orders yet — take one on the POS or place one from the customer menu to see it here.</div>`;
 }
+
+async function renderStaffList() {
+  const staff = await listStaff(CURRENT_RESTAURANT.id);
+  const wrap = document.getElementById("staff-list");
+  wrap.innerHTML = staff.length
+    ? staff.map((s) => `<div class="top-item-row">
+        <span class="ti-name">${s.name} <span class="muted" style="text-transform:capitalize; font-size:11px;">· ${s.role}</span></span>
+        <button class="btn-mini" data-remove="${s.id}">Remove</button>
+      </div>`).join("")
+    : `<div class="muted" style="font-size:13px;">No staff added yet.</div>`;
+
+  wrap.querySelectorAll("[data-remove]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Remove this staff member? Their PIN will stop working immediately.")) return;
+      await removeStaff(btn.dataset.remove);
+      renderStaffList();
+    });
+  });
+}
+
+document.getElementById("btn-add-staff").addEventListener("click", async () => {
+  const name = document.getElementById("staff-name").value.trim();
+  const pin = document.getElementById("staff-pin").value.trim();
+  const role = document.getElementById("staff-role").value;
+  const errorEl = document.getElementById("staff-error");
+  errorEl.textContent = "";
+
+  if (!name) { errorEl.textContent = "Enter a name."; return; }
+  if (!/^\d{4}$/.test(pin)) { errorEl.textContent = "PIN must be exactly 4 digits."; return; }
+
+  const result = await addStaff(CURRENT_RESTAURANT.id, name, pin, role);
+  if (result.error) {
+    errorEl.textContent = result.error;
+    return;
+  }
+  document.getElementById("staff-name").value = "";
+  document.getElementById("staff-pin").value = "";
+  renderStaffList();
+});
 
 init();
 </script>

@@ -132,6 +132,29 @@ async function getOrderStatus(orderId) {
   return data[0];
 }
 
+async function listStaff(restaurantId) {
+  const { data, error } = await supa.rpc("list_staff", { p_restaurant_id: restaurantId });
+  if (error) { console.error(error); return []; }
+  return data;
+}
+
+async function addStaff(restaurantId, name, pin, role) {
+  const { data, error } = await supa.rpc("add_staff", {
+    p_restaurant_id: restaurantId,
+    p_name: name,
+    p_pin: pin,
+    p_role: role,
+  });
+  if (error) return { error: error.message };
+  return { data: data[0] };
+}
+
+async function removeStaff(staffId) {
+  const { error } = await supa.rpc("remove_staff", { p_staff_id: staffId });
+  if (error) { console.error(error); return false; }
+  return true;
+}
+
 // Builds a real, working WhatsApp link — no Meta Business API, no
 // approval, no waiting, works today. It opens WhatsApp with the
 // receipt text pre-filled in a chat with the RESTAURANT's own number;
