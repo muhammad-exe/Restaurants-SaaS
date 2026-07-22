@@ -62,6 +62,7 @@
   </div>
 </div>
 <div class="toast" id="toast">Order saved and closed</div>
+<div class="call-popup-wrap" id="call-popup-wrap"></div>
 
 <div id="receipt-print-area" class="receipt-print-area"></div>
 
@@ -86,7 +87,7 @@ async function init() {
     return;
   }
   document.getElementById("r-name").textContent = r.name;
-  menu = await loadMenu(r.id);
+  menu = await loadFullMenu(r.id);
 
   const { data: tableRows } = await supa.from("restaurant_tables").select("*").eq("restaurant_id", r.id);
   tables = tableRows || [];
@@ -171,38 +172,95 @@ function printReceipt({ tableLabel, orderId, items, subtotal, tax, total, paymen
 // reuse that same unlocked context for every beep afterward.
 let audioCtx = null;
 function unlockAudio() {
-  if (audioCtx) return;
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
-  } catch (e) { /* Web Audio not available on this device — beep just won't play */ }
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch (e) { /* Web Audio not available on this device — ring just won't play */ }
+  }
+  // Ask for permission to show OS-level notifications (these are what let
+  // the alert surface — and vibrate the phone — even if the browser tab
+  // is in the background or the screen is locked).
+  if (window.Notification && Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
 }
 
-function playBeep() {
+// A long, LOUD "ding-dong ding-dong…" ring — seven chime pairs back to
+// back (~7 seconds total) at a much higher gain than before, so it
+// carries across a noisy restaurant floor instead of blending in.
+function playRingtone() {
   if (!audioCtx) return;
   if (audioCtx.state === "suspended") audioCtx.resume();
   try {
-    [880, 660].forEach((freq, i) => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.frequency.value = freq;
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      const start = audioCtx.currentTime + i * 0.18;
-      gain.gain.setValueAtTime(0.001, start);
-      gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.16);
-      osc.start(start);
-      osc.stop(start + 0.18);
-    });
-  } catch (e) { /* fine — visual alert still shows even if sound fails */ }
+    const now = audioCtx.currentTime;
+    const cycles = 7;
+    const cycleLength = 0.95; // seconds between the start of each ding-dong
+    for (let i = 0; i < cycles; i++) {
+      const base = now + i * cycleLength;
+      [[988, 0], [740, 0.3]].forEach(([freq, offset]) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        const start = base + offset;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.85, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+        osc.start(start);
+        osc.stop(start + 0.34);
+      });
+    }
+  } catch (e) { /* fine — visual + vibration alerts still show even if sound fails */ }
+  // Buzz the phone too, in the same rhythm as the chime, extended to
+  // match the longer ring — this is what makes the alert register on
+  // mobile even if the ringer is silenced or the tab is backgrounded.
+  if (navigator.vibrate) {
+    navigator.vibrate([400, 260, 400, 260, 400, 260, 400, 260, 400, 260, 400, 260, 400]);
+  }
+}
+
+// On-screen banner in the corner of the screen, plus (when permitted) a
+// real OS notification so the alert still reaches the staff member if
+// they've switched away from this tab or their phone is locked.
+function showCallPopup(call) {
+  const wrap = document.getElementById("call-popup-wrap");
+  const label = call.table_label || "A table";
+  const el = document.createElement("div");
+  el.className = "call-popup";
+  el.innerHTML = `
+    <div class="cp-icon">&#128276;</div>
+    <div>
+      <div class="cp-title">${label} is calling!</div>
+      <div class="cp-sub">${call.urgent ? "Urgent — rung " + call.call_count + "x" : "Needs assistance"}</div>
+    </div>
+    <button class="cp-close" title="Dismiss">&times;</button>`;
+  el.querySelector(".cp-close").onclick = () => el.remove();
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 8000);
+
+  if (window.Notification && Notification.permission === "granted") {
+    try {
+      const n = new Notification(`${label} is calling!`, {
+        body: call.urgent ? `Urgent — rung ${call.call_count}x` : "Needs assistance",
+        icon: "icons/icon-192.png",
+        tag: `table-call-${call.table_id}`,
+        vibrate: [400, 260, 400, 260, 400, 260, 400],
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (e) { /* notification failed to show — banner above still covers it */ }
+  }
 }
 
 function isBellMuted() {
   return localStorage.getItem("dastarkhwan_bell_muted") === "true";
 }
-function updateBellIcon() {
-  document.getElementById("bell-btn").textContent = isBellMuted() ? "\u{1F515}" : "\u{1F514}";
+function updateBellIcon(ringing) {
+  const btn = document.getElementById("bell-btn");
+  btn.textContent = isBellMuted() ? "\u{1F515}" : "\u{1F514}";
+  btn.classList.toggle("ringing", !!ringing && !isBellMuted());
 }
 document.getElementById("bell-btn").addEventListener("click", () => {
   unlockAudio();
@@ -210,7 +268,7 @@ document.getElementById("bell-btn").addEventListener("click", () => {
   updateBellIcon();
 });
 
-let lastCallCount = 0;
+let knownCalls = new Map(); // table_id -> call_count, so we can tell which table just rang
 async function pollTableCalls() {
   const calls = await getActiveCalls(CURRENT_RESTAURANT.id);
   const panel = document.getElementById("calls-panel");
@@ -218,14 +276,31 @@ async function pollTableCalls() {
 
   if (!calls.length) {
     panel.style.display = "none";
-    lastCallCount = 0;
+    knownCalls.clear();
+    updateBellIcon(false);
     return;
   }
 
   panel.style.display = "block";
-  const totalCalls = calls.reduce((s, c) => s + Number(c.call_count), 0);
-  if (totalCalls > lastCallCount && !isBellMuted()) playBeep();
-  lastCallCount = totalCalls;
+
+  // A table counts as "newly ringing" if it wasn't calling before, or its
+  // call_count just went up (they pressed the bell again).
+  const newlyRinging = [];
+  calls.forEach((c) => {
+    const prevCount = knownCalls.get(c.table_id) || 0;
+    if (Number(c.call_count) > prevCount) newlyRinging.push(c);
+    knownCalls.set(c.table_id, Number(c.call_count));
+  });
+  const stillCallingIds = new Set(calls.map((c) => c.table_id));
+  for (const id of knownCalls.keys()) {
+    if (!stillCallingIds.has(id)) knownCalls.delete(id);
+  }
+
+  if (newlyRinging.length && !isBellMuted()) {
+    playRingtone();
+    newlyRinging.forEach(showCallPopup);
+  }
+  updateBellIcon(true);
 
   wrap.innerHTML = calls.map((c) => `
     <div class="order-line" style="margin-bottom:8px; ${c.urgent ? "border-color:var(--danger);" : ""}">
@@ -320,18 +395,43 @@ function renderCats() {
   });
 }
 
+// Every cashier/waiter/owner/manager who's signed into the POS can flip
+// a dish's availability — tap the small dot in the corner of its card.
+// Unavailable items gray out, show an "Out of stock" badge, and can no
+// longer be added to an order from here; the customer QR menu picks up
+// the change automatically the next time it polls (loadMenu filters on
+// is_available).
 function renderGrid() {
   const wrap = document.getElementById("pos-grid");
   wrap.innerHTML = "";
   (menu[posCat]?.items || []).forEach((item) => {
-    const b = document.createElement("button");
-    b.className = "pos-item";
+    const card = document.createElement("div");
+    card.className = "pos-item" + (item.is_available === false ? " unavailable" : "");
+    card.setAttribute("role", "button");
     const imgHtml = item.image_url
       ? `<img src="${item.image_url}" alt="" class="pi-photo" loading="lazy" onerror="this.style.display='none'">`
       : "";
-    b.innerHTML = `${imgHtml}<div class="name">${item.name}</div><div class="price">${fmt(item.price)}</div>`;
-    b.onclick = () => addItem(item);
-    wrap.appendChild(b);
+    const outBadge = item.is_available === false ? `<div class="pi-out-badge">Out of stock</div>` : "";
+    card.innerHTML = `${outBadge}<button class="pi-toggle" title="${item.is_available === false ? "Mark back in stock" : "Mark out of stock"}">${item.is_available === false ? "&#8635;" : "&#10005;"}</button>
+      ${imgHtml}<div class="name">${item.name}</div><div class="price">${fmt(item.price)}</div>`;
+    card.querySelector(".pi-toggle").onclick = async (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const nextAvailable = item.is_available === false;
+      const result = await setItemAvailability(item.id, nextAvailable);
+      if (result) {
+        item.is_available = result.is_available;
+        renderGrid();
+      } else {
+        btn.disabled = false;
+      }
+    };
+    card.addEventListener("click", () => {
+      if (item.is_available === false) return;
+      addItem(item);
+    });
+    wrap.appendChild(card);
   });
 }
 

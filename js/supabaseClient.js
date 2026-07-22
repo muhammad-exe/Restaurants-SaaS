@@ -44,6 +44,44 @@ async function loadMenu(restaurantId) {
   }));
 }
 
+// Same as loadMenu but WITHOUT the is_available filter — used on the
+// staff side (POS) so cashiers/waiters/owners/managers can see and
+// toggle out-of-stock items, not just the ones customers can order.
+async function loadFullMenu(restaurantId) {
+  const { data: categories, error: catErr } = await supa
+    .from("categories")
+    .select("*")
+    .eq("restaurant_id", restaurantId)
+    .order("sort_order");
+  const { data: items, error: itemErr } = await supa
+    .from("menu_items")
+    .select("*")
+    .eq("restaurant_id", restaurantId)
+    .order("sort_order");
+  if (catErr || itemErr) {
+    console.error(catErr || itemErr);
+    return [];
+  }
+  return categories.map((c) => ({
+    ...c,
+    items: items.filter((i) => i.category_id === c.id),
+  }));
+}
+
+// Marks a dish out of stock (or back in stock). Any signed-in staff
+// member can call this — cashier/waiter/owner/manager all reach it
+// through the POS, which is exactly the four roles the feature was
+// asked for. Customer menu (loadMenu) already filters on is_available,
+// so this takes effect the moment the customer's menu next polls.
+async function setItemAvailability(itemId, isAvailable) {
+  const { data, error } = await supa.rpc("set_item_availability", {
+    p_item_id: itemId,
+    p_is_available: isAvailable,
+  });
+  if (error || !data || data.length === 0) { console.error(error); return null; }
+  return data[0];
+}
+
 // Creates an order + its line items via the create_order() database
 // function — the client never inserts into orders/order_items/customers
 // directly, so a stolen anon key can't forge arbitrary rows.
@@ -206,6 +244,54 @@ async function removeStaff(staffId) {
 // (days, not money). Swap this function out for that API later without
 // changing anything else in the app — every call site just expects a
 // URL back.
+// Adds more items to an order that's already been placed — used when a
+// customer rescans the table QR mid-meal and chooses "add to my order"
+// instead of viewing the waiting page. Kitchen sees it because a
+// preparing/ready order gets bumped back to "open".
+async function addItemsToOrder(orderId, cart) {
+  const items = cart.map((l) => ({ menu_item_id: l.id, name: l.name, price: l.price, qty: l.qty }));
+  const { data, error } = await supa.rpc("add_items_to_order", { p_order_id: orderId, p_items: items });
+  if (error || !data || data.length === 0) { console.error(error); return null; }
+  return data[0];
+}
+
+// A stable per-device id (not tied to a login) so two phones scanning
+// the same table's QR can be told apart as "player 1" / "player 2" in
+// the waiting-room game, and so a page refresh doesn't lose your seat.
+function getDeviceId() {
+  const key = "dastarkhwan_device_id";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+// ---- "Goal Rush" two-player waiting-room game ----
+async function gameJoin(tableId, orderId, playerId) {
+  const { data, error } = await supa.rpc("game_join", { p_table_id: tableId, p_order_id: orderId, p_player_id: playerId });
+  if (error || !data || data.length === 0) { console.error(error); return null; }
+  return data[0];
+}
+async function gameState(sessionId) {
+  const { data, error } = await supa.rpc("game_state", { p_session_id: sessionId });
+  if (error || !data || data.length === 0) return null;
+  return data[0];
+}
+async function gameShoot(sessionId, playerId, zone) {
+  const { error } = await supa.rpc("game_shoot", { p_session_id: sessionId, p_player_id: playerId, p_zone: zone });
+  if (error) console.error(error);
+}
+async function gameSave(sessionId, playerId, zone) {
+  const { error } = await supa.rpc("game_save", { p_session_id: sessionId, p_player_id: playerId, p_zone: zone });
+  if (error) console.error(error);
+}
+async function gameNextRound(sessionId) {
+  const { error } = await supa.rpc("game_next_round", { p_session_id: sessionId });
+  if (error) console.error(error);
+}
+
 function buildWhatsAppReceiptLink(order, cart) {
   if (!CURRENT_RESTAURANT.whatsapp_number) return null;
   const lines = cart.map((l) => `${l.qty}x ${l.name} - ${CURRENT_RESTAURANT.currency} ${Math.round(l.price * l.qty)}`);

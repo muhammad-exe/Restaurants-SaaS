@@ -10,28 +10,7 @@
 <body>
 <div class="app menu-shell">
   <div id="loading" class="loading-msg">Loading menu…</div>
-  <div id="menu-root" style="display:none;">
-    <div class="menu-header">
-      <div class="r-name" id="r-name"></div>
-      <div class="r-table" id="r-table"></div>
-      <button class="call-waiter-btn" id="btn-call-waiter">&#128276; Call waiter</button>
-    </div>
-    <div class="menu-cats" id="menu-cats"></div>
-    <div class="menu-list" id="menu-list"></div>
-
-    <div class="cart-bar" id="cart-bar" style="display:none;">
-      <span><span class="cb-count" id="cart-count">0</span>View order</span>
-      <span id="cart-total"></span>
-    </div>
-    <div class="cart-detail" id="cart-detail" style="display:none;"></div>
-
-    <div class="checkout-form" id="checkout-form" style="display:none;">
-      <label style="font-weight:600; color:var(--ink); margin-bottom:6px; display:block;">Your phone number (optional)</label>
-      <input type="tel" id="phone-input" placeholder="03XX XXXXXXX">
-      <label><input type="checkbox" id="opt-in" checked> Keep me updated with occasional offers</label>
-      <button class="btn-primary" id="btn-place-order">Place order</button>
-    </div>
-  </div>
+  <div id="menu-root" style="display:none;"></div>
 </div>
 <div class="toast" id="call-toast">Waiter has been called</div>
 
@@ -39,17 +18,41 @@
 <script src="js/config.js"></script>
 <script src="js/supabaseClient.js"></script>
 <script>
-let menu = [];
+// ---------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------
+let menu = [];             // categories -> items (available items only)
 let menuCat = 0;
 let cart = [];
 let currentTable = null;
 let cartDetailOpen = false;
+let addonMode = false;     // true when adding items to an already-placed order
+let addonOrderId = null;   // the order we're adding items to
+let availabilityTimer = null;
 
+const deviceId = getDeviceId();
 const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
+const root = () => document.getElementById("menu-root");
 
 function getTableTokenFromUrl() {
   const params = new URLSearchParams(window.location.search);
   return params.get("t"); // e.g. menu.html?t=zg-t4
+}
+
+function clearTimers() {
+  if (availabilityTimer) { clearInterval(availabilityTimer); availabilityTimer = null; }
+  stopGamePolling();
+  if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+  if (factTimer) { clearInterval(factTimer); factTimer = null; }
+}
+
+function headerHtml() {
+  return `
+    <div class="menu-header">
+      <div class="r-name" id="r-name">${CURRENT_RESTAURANT.name}</div>
+      <div class="r-table" id="r-table">${currentTable ? `${currentTable.label} · Dine-in` : "Takeaway order"}</div>
+      <button class="call-waiter-btn" id="btn-call-waiter">&#128276; Call waiter</button>
+    </div>`;
 }
 
 async function init() {
@@ -60,7 +63,6 @@ async function init() {
     document.getElementById("loading").classList.add("error-msg");
     return;
   }
-  document.getElementById("r-name").textContent = r.name;
 
   const token = getTableTokenFromUrl();
   if (token) {
@@ -72,31 +74,124 @@ async function init() {
       .maybeSingle();
     currentTable = table || null;
   }
-  document.getElementById("r-table").textContent = currentTable ? `${currentTable.label} · Dine-in` : "Takeaway order";
 
-  // If this table already has an order in progress (customer scanned
-  // again after closing the tab, or after placing an order earlier),
-  // jump straight back to the live tracker instead of the menu.
+  document.getElementById("loading").style.display = "none";
+  root().style.display = "block";
+
+  // If this table already has an order in progress, let the customer
+  // choose: add more items to it, or jump to the waiting page — rather
+  // than silently deciding for them.
   if (currentTable) {
     const active = await getActiveOrderForTable(currentTable.id);
     if (active) {
-      document.getElementById("loading").style.display = "none";
-      document.getElementById("menu-root").style.display = "block";
-      renderOrderConfirmation(active, active.items || []);
+      renderRescanChoice(active);
       return;
     }
   }
 
-  menu = await loadMenu(r.id);
-  document.getElementById("loading").style.display = "none";
-  document.getElementById("menu-root").style.display = "block";
+  await loadFreshMenu();
+  renderMenuScreen();
+}
+
+async function loadFreshMenu() {
+  menu = await loadMenu(CURRENT_RESTAURANT.id);
+}
+
+// ---------------------------------------------------------------------
+// Screen: rescan choice ("add to my order" vs "view my order")
+// ---------------------------------------------------------------------
+function renderRescanChoice(activeOrder) {
+  clearTimers();
+  root().innerHTML = `
+    ${headerHtml()}
+    <div class="rc-wrap">
+      <div class="rc-icon">&#128522;</div>
+      <h4>Welcome back!</h4>
+      <div class="rc-total">${currentTable.label} · current order total ${fmt(activeOrder.total)}</div>
+      <div class="rc-actions">
+        <button class="rc-btn rc-btn-add" id="btn-rc-add">+ Add more items to my order</button>
+        <button class="rc-btn rc-btn-view" id="btn-rc-view">View my order &amp; wait time</button>
+      </div>
+    </div>`;
+  wireCallWaiterButton("btn-call-waiter");
+
+  document.getElementById("btn-rc-add").addEventListener("click", async () => {
+    addonMode = true;
+    addonOrderId = activeOrder.id;
+    cart = [];
+    await loadFreshMenu();
+    renderMenuScreen();
+  });
+  document.getElementById("btn-rc-view").addEventListener("click", () => {
+    renderOrderConfirmation(activeOrder, activeOrder.items || [], { isAddon: false, freshlyPlaced: false });
+  });
+}
+
+// ---------------------------------------------------------------------
+// Screen: menu browsing + cart
+// ---------------------------------------------------------------------
+function renderMenuScreen() {
+  clearTimers();
+  root().innerHTML = `
+    ${headerHtml()}
+    ${addonMode ? `<div class="addon-banner">Adding items to your existing order at ${currentTable.label}</div>` : ""}
+    <div class="menu-cats" id="menu-cats"></div>
+    <div class="menu-list" id="menu-list"></div>
+
+    <div class="cart-bar" id="cart-bar" style="display:none;">
+      <span><span class="cb-count" id="cart-count">0</span>View order</span>
+      <span id="cart-total"></span>
+    </div>
+    <div class="cart-detail" id="cart-detail" style="display:none;"></div>
+
+    <div class="checkout-form" id="checkout-form" style="display:none;">
+      ${addonMode ? "" : `
+        <label style="font-weight:600; color:var(--ink); margin-bottom:6px; display:block;">Your phone number (optional)</label>
+        <input type="tel" id="phone-input" placeholder="03XX XXXXXXX">
+        <label><input type="checkbox" id="opt-in" checked> Keep me updated with occasional offers</label>`}
+      <button class="btn-primary" id="btn-place-order">${addonMode ? "Add to my order" : "Place order"}</button>
+    </div>`;
+
+  wireCallWaiterButton("btn-call-waiter");
+  menuCat = 0;
   renderCats();
   renderList();
   renderCartBar();
+
+  document.getElementById("cart-bar").addEventListener("click", () => {
+    cartDetailOpen = !cartDetailOpen;
+    if (cartDetailOpen) renderCartDetail();
+    else document.getElementById("cart-detail").style.display = "none";
+  });
+
+  document.getElementById("btn-place-order").addEventListener("click", handlePlaceOrder);
+
+  // Live availability: staff can 86 a dish any time. Poll every 15s
+  // while the customer is browsing so the menu never shows something
+  // that just went out of stock, and quietly drop it from the cart if
+  // it does (with a heads-up) rather than letting them order it.
+  availabilityTimer = setInterval(refreshAvailability, 15000);
+}
+
+async function refreshAvailability() {
+  const fresh = await loadMenu(CURRENT_RESTAURANT.id);
+  menu = fresh;
+  const availableIds = new Set(menu.flatMap((c) => c.items).map((i) => i.id));
+  const removed = cart.filter((l) => !availableIds.has(l.id));
+  if (removed.length) {
+    cart = cart.filter((l) => availableIds.has(l.id));
+    alert(`Sorry — ${removed.map((l) => l.name).join(", ")} just sold out and ${removed.length > 1 ? "were" : "was"} removed from your order.`);
+  }
+  if (menuCat >= menu.length) menuCat = 0;
+  renderCats();
+  renderList();
+  renderCartBar();
+  if (cartDetailOpen) renderCartDetail();
 }
 
 function renderCats() {
   const wrap = document.getElementById("menu-cats");
+  if (!wrap) return;
   wrap.innerHTML = "";
   menu.forEach((c, i) => {
     const b = document.createElement("button");
@@ -109,6 +204,7 @@ function renderCats() {
 
 function renderList() {
   const wrap = document.getElementById("menu-list");
+  if (!wrap) return;
   wrap.innerHTML = "";
   (menu[menuCat]?.items || []).forEach((item) => {
     const row = document.createElement("div");
@@ -144,6 +240,7 @@ function renderCartBar() {
   const bar = document.getElementById("cart-bar");
   const form = document.getElementById("checkout-form");
   const detail = document.getElementById("cart-detail");
+  if (!bar) return;
   const count = cart.reduce((s, l) => s + l.qty, 0);
   if (count === 0) {
     bar.style.display = "none";
@@ -160,6 +257,7 @@ function renderCartBar() {
 
 function renderCartDetail() {
   const detail = document.getElementById("cart-detail");
+  if (!detail) return;
   if (cart.length === 0) {
     detail.style.display = "none";
     cartDetailOpen = false;
@@ -190,11 +288,10 @@ function renderCartDetail() {
   });
 }
 
-document.getElementById("cart-bar").addEventListener("click", () => {
-  cartDetailOpen = !cartDetailOpen;
-  if (cartDetailOpen) renderCartDetail();
-  else document.getElementById("cart-detail").style.display = "none";
-});
+function wireCallWaiterButton(btnId) {
+  const btn = document.getElementById(btnId);
+  if (btn) btn.addEventListener("click", () => callWaiter(btnId));
+}
 
 async function callWaiter(btnId) {
   if (!currentTable) return;
@@ -208,15 +305,32 @@ async function callWaiter(btnId) {
   setTimeout(() => { if (btn) btn.disabled = false; }, 15000); // avoid accidental spamming
 }
 
-document.getElementById("btn-call-waiter").addEventListener("click", () => callWaiter("btn-call-waiter"));
-
-document.getElementById("btn-place-order").addEventListener("click", async () => {
+async function handlePlaceOrder() {
   if (cart.length === 0) return;
-  const phone = document.getElementById("phone-input").value.trim();
-  const optIn = document.getElementById("opt-in").checked;
   const btn = document.getElementById("btn-place-order");
   btn.disabled = true;
+
+  if (addonMode) {
+    btn.textContent = "Adding…";
+    const result = await addItemsToOrder(addonOrderId, cart);
+    if (!result) {
+      btn.disabled = false;
+      btn.textContent = "Add to my order";
+      alert("Couldn't add those items — please try again or tell the staff.");
+      return;
+    }
+    // Re-fetch the full order (with the merged item list) for the tracker.
+    const full = await getActiveOrderForTable(currentTable.id);
+    addonMode = false;
+    renderOrderConfirmation(full || result, (full && full.items) || cart, { isAddon: true, freshlyPlaced: true });
+    return;
+  }
+
   btn.textContent = "Placing order…";
+  const phoneEl = document.getElementById("phone-input");
+  const optInEl = document.getElementById("opt-in");
+  const phone = phoneEl ? phoneEl.value.trim() : "";
+  const optIn = optInEl ? optInEl.checked : true;
 
   const order = await createOrder({
     restaurantId: CURRENT_RESTAURANT.id,
@@ -234,22 +348,43 @@ document.getElementById("btn-place-order").addEventListener("click", async () =>
     return;
   }
 
-  renderOrderConfirmation(order, cart);
-});
+  renderOrderConfirmation(order, cart, { isAddon: false, freshlyPlaced: true });
+}
 
-function renderOrderConfirmation(order, cartItems) {
+// ---------------------------------------------------------------------
+// Screen: order confirmation / waiting page
+// ---------------------------------------------------------------------
+function renderOrderConfirmation(order, cartItems, opts) {
+  clearTimers();
+  const { isAddon, freshlyPlaced } = opts || {};
   const grand = order.total;
   const waLink = buildWhatsAppReceiptLink(order, cartItems);
+  const heading = isAddon ? "Added to your order" : "Order sent to the kitchen";
+  const showGameTab = !!currentTable;
 
-  document.getElementById("menu-root").innerHTML = `
+  root().innerHTML = `
+    ${headerHtml()}
     <div class="order-confirm">
       <div class="oc-check">&#10003;</div>
-      <h4>Order sent to the kitchen</h4>
-      <p class="muted" style="margin-bottom:18px;">${currentTable ? currentTable.label : "Takeaway"} · Order total ${fmt(grand)}</p>
+      <h4>${heading}</h4>
+      <p class="muted" style="margin-bottom:6px;">${currentTable ? currentTable.label : "Takeaway"} · Order total ${fmt(grand)}</p>
 
       <div class="oc-tracker" id="oc-tracker"></div>
 
-      <div class="oc-fact-card" id="oc-fact-card"></div>
+      ${showGameTab ? `
+        <div class="oc-tabs">
+          <button class="oc-tab active" id="tab-facts">While you wait</button>
+          <button class="oc-tab" id="tab-game">&#9917; Goal Rush</button>
+        </div>
+        <div class="oc-panel active" id="panel-facts">
+          <div class="oc-fact-card" id="oc-fact-card"></div>
+        </div>
+        <div class="oc-panel" id="panel-game">
+          <div class="gr-wrap" id="gr-wrap"></div>
+        </div>
+      ` : `
+        <div class="oc-fact-card" id="oc-fact-card" style="margin-top:14px;"></div>
+      `}
 
       <button class="call-waiter-btn oc-call-waiter" id="btn-call-waiter-tracker">&#128276; Call waiter</button>
 
@@ -260,10 +395,23 @@ function renderOrderConfirmation(order, cartItems) {
       : `<p class="muted" style="font-size:12px; margin-top:16px;">WhatsApp receipts aren't set up for this restaurant yet.</p>`}
     </div>`;
 
-  document.getElementById("btn-call-waiter-tracker").addEventListener("click", () => callWaiter("btn-call-waiter-tracker"));
+  wireCallWaiterButton("btn-call-waiter-tracker");
+
+  if (showGameTab) {
+    document.getElementById("tab-facts").addEventListener("click", () => switchTrackerTab("facts"));
+    document.getElementById("tab-game").addEventListener("click", () => switchTrackerTab("game"));
+    joinGoalRush(order.id);
+  }
 
   startOrderTracking(order.id, order.status);
   startFactCarousel();
+}
+
+function switchTrackerTab(which) {
+  document.getElementById("tab-facts").classList.toggle("active", which === "facts");
+  document.getElementById("tab-game").classList.toggle("active", which === "game");
+  document.getElementById("panel-facts").classList.toggle("active", which === "facts");
+  document.getElementById("panel-game").classList.toggle("active", which === "game");
 }
 
 const WAIT_FACTS = [
@@ -279,6 +427,7 @@ let factIndex = 0;
 let factTimer = null;
 function startFactCarousel() {
   const card = document.getElementById("oc-fact-card");
+  if (!card) return;
   const render = () => {
     card.style.opacity = 0;
     setTimeout(() => {
@@ -302,6 +451,7 @@ let statusTimer = null;
 function renderTracker(currentStatus) {
   const idx = Math.max(0, STATUS_STEPS.findIndex((s) => s.key === currentStatus));
   const wrap = document.getElementById("oc-tracker");
+  if (!wrap) return;
   wrap.innerHTML = STATUS_STEPS.map((s, i) => `
     <div class="oc-step ${i <= idx ? "done" : ""} ${i === idx ? "current" : ""}">
       <div class="oc-dot"></div>
@@ -317,6 +467,150 @@ function startOrderTracking(orderId, initialStatus) {
     renderTracker(s.status);
     if (s.status === "closed") clearInterval(statusTimer);
   }, 4000);
+}
+
+// ---------------------------------------------------------------------
+// "Goal Rush" — two-player penalty shootout on the waiting page. Both
+// customers at the table scan the same QR after ordering; whoever
+// joins first is Player 1 (striker for round 1), whoever joins second
+// is Player 2. They take turns shooting/saving; the score is shared.
+// ---------------------------------------------------------------------
+let gameSession = null;
+let gamePlayerNum = null;
+let gamePollTimer = null;
+let gameOrderId = null;
+let lastRenderedPhaseKey = null; // avoids re-rendering (and losing button hover state) every poll tick
+
+function stopGamePolling() {
+  if (gamePollTimer) { clearInterval(gamePollTimer); gamePollTimer = null; }
+  gameSession = null;
+  gamePlayerNum = null;
+  lastRenderedPhaseKey = null;
+}
+
+async function joinGoalRush(orderId) {
+  gameOrderId = orderId;
+  const s = await gameJoin(currentTable.id, orderId, deviceId);
+  if (!s) return;
+  gameSession = s;
+  gamePlayerNum = s.player1_id === deviceId ? 1 : s.player2_id === deviceId ? 2 : null;
+  renderGoalRush();
+  gamePollTimer = setInterval(async () => {
+    const fresh = await gameState(gameSession.id);
+    if (!fresh) return;
+    gameSession = fresh;
+    renderGoalRush();
+  }, 1300);
+}
+
+function renderGoalRush() {
+  const wrap = document.getElementById("gr-wrap");
+  if (!wrap || !gameSession) return;
+  const s = gameSession;
+  const key = `${s.phase}-${s.round}-${s.shot_zone}-${s.save_zone}-${s.score1}-${s.score2}`;
+  if (key === lastRenderedPhaseKey) return;
+  lastRenderedPhaseKey = key;
+
+  const youAreStriker = s.turn_striker === gamePlayerNum;
+  const scoreLabel = `<div class="gr-score-row">
+      <div class="gr-score">${s.score1} <span style="color:#8B8474; font-size:14px;">–</span> ${s.score2}</div>
+      <div class="gr-round">Round ${s.round}${gamePlayerNum ? ` · You're Player ${gamePlayerNum}` : ""}</div>
+    </div>`;
+
+  if (s.phase === "waiting") {
+    wrap.innerHTML = `
+      ${scoreLabel}
+      <div class="gr-waiting">
+        <div class="gr-waiting-icon">&#9917;</div>
+        Waiting for a second player…<br>Ask whoever you're dining with to scan this table's QR code too, then tap "Goal Rush" here.
+      </div>`;
+    return;
+  }
+
+  const zones = ["left", "center", "right"];
+  const zoneIcon = { left: "&#8592;", center: "&#8226;", right: "&#8594;" };
+
+  if (s.phase === "ready") {
+    if (youAreStriker) {
+      wrap.innerHTML = `
+        ${scoreLabel}
+        <div class="gr-status">Your turn — pick a corner to shoot!</div>
+        <div class="gr-pitch"><div class="gr-goal">
+          ${zones.map((z) => `<button class="gr-zone" data-zone="${z}">${zoneIcon[z]}</button>`).join("")}
+        </div></div>`;
+      wrap.querySelectorAll(".gr-zone").forEach((btn) => {
+        btn.onclick = async () => {
+          wrap.querySelectorAll(".gr-zone").forEach((b) => b.disabled = true);
+          await gameShoot(gameSession.id, deviceId, btn.dataset.zone);
+          lastRenderedPhaseKey = null;
+          const fresh = await gameState(gameSession.id);
+          if (fresh) { gameSession = fresh; renderGoalRush(); }
+        };
+      });
+    } else {
+      wrap.innerHTML = `
+        ${scoreLabel}
+        <div class="gr-status">Get ready — your opponent is lining up a shot…</div>
+        <div class="gr-pitch"><div class="gr-goal">
+          ${zones.map((z) => `<button class="gr-zone disabled" disabled>${zoneIcon[z]}</button>`).join("")}
+        </div></div>`;
+    }
+    return;
+  }
+
+  if (s.phase === "shot_pending") {
+    if (!youAreStriker) {
+      wrap.innerHTML = `
+        ${scoreLabel}
+        <div class="gr-status">Shot's coming — dive to save it!</div>
+        <div class="gr-pitch"><div class="gr-goal">
+          ${zones.map((z) => `<button class="gr-zone" data-zone="${z}">&#129485;</button>`).join("")}
+        </div></div>`;
+      wrap.querySelectorAll(".gr-zone").forEach((btn) => {
+        btn.onclick = async () => {
+          wrap.querySelectorAll(".gr-zone").forEach((b) => b.disabled = true);
+          await gameSave(gameSession.id, deviceId, btn.dataset.zone);
+          lastRenderedPhaseKey = null;
+          const fresh = await gameState(gameSession.id);
+          if (fresh) { gameSession = fresh; renderGoalRush(); }
+        };
+      });
+    } else {
+      wrap.innerHTML = `
+        ${scoreLabel}
+        <div class="gr-status">Ball's in the air — waiting for the keeper…</div>
+        <div class="gr-pitch"><div class="gr-goal">
+          ${zones.map((z) => `<button class="gr-zone ${z === s.shot_zone ? "picked" : "disabled"}" disabled>&#9917;</button>`).join("")}
+        </div></div>`;
+    }
+    return;
+  }
+
+  if (s.phase === "resolved") {
+    const wasGoal = s.result === "goal";
+    const scorerNum = s.turn_striker; // striker of the round that just resolved
+    const scorerIsYou = scorerNum === gamePlayerNum;
+    let resultText;
+    if (wasGoal) resultText = scorerIsYou ? "GOAL! You scored!" : "GOAL! Your opponent scored.";
+    else resultText = scorerIsYou ? "Saved! Your shot was stopped." : "Nice save! You stopped it.";
+
+    wrap.innerHTML = `
+      ${scoreLabel}
+      <div class="gr-pitch">
+        <div class="gr-goal">
+          ${zones.map((z) => `<button class="gr-zone ${z === s.shot_zone ? "picked" : "disabled"}" disabled>&#9917;</button>`).join("")}
+        </div>
+        <div class="gr-result-flash show">${resultText}</div>
+      </div>
+      <button class="gr-next-btn" id="gr-next">Next round &#8594;</button>`;
+    document.getElementById("gr-next").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      await gameNextRound(gameSession.id);
+      lastRenderedPhaseKey = null;
+      const fresh = await gameState(gameSession.id);
+      if (fresh) { gameSession = fresh; renderGoalRush(); }
+    });
+  }
 }
 
 init();
