@@ -48,7 +48,11 @@
       </div>
     </div>
     <div class="pos-order">
-      <h3>New order</h3>
+      <h3 id="order-panel-heading">New order</h3>
+      <div class="edit-banner" id="edit-banner" style="display:none;">
+        Editing an existing order — changes replace its current items.
+        <button id="btn-cancel-edit">Cancel</button>
+      </div>
       <select class="table-select" id="table-select"></select>
       <div class="order-lines" id="order-lines"></div>
       <div class="order-totals" id="order-totals"></div>
@@ -76,6 +80,7 @@ let order = [];
 let payMethod = "cash";
 let tables = [];
 let loggedInStaff = null;
+let editingOrderId = null; // set when the cart panel is editing an existing order instead of building a new one
 const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
 
 async function init() {
@@ -336,34 +341,58 @@ async function pollIncomingOrders() {
     const nextAction = o.status === "open" ? "preparing" : o.status === "preparing" ? "ready" : "closed";
     const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & print receipt";
     const waiterBlocked = isWaiterMode && nextAction === "closed";
-    const actionHtml = waiterBlocked
+    const nextActionHtml = waiterBlocked
       ? `<span class="muted" style="font-size:11px;">Ask cashier to close</span>`
-      : `<button class="btn-mini" data-id="${o.id}" data-next="${nextAction}">${nextLabel}</button>`;
+      : `<button class="btn-mini" data-action="advance" data-next="${nextAction}">${nextLabel}</button>`;
+    // Editing items is open to any signed-in role (fixing a mistake
+    // shouldn't need a manager). Voiding an order is restricted the
+    // same way closing/payment is — a waiter can't cancel an order
+    // outright, only cashier/manager/owner can.
+    const editHtml = `<button class="btn-mini" data-action="edit">Edit</button>`;
+    const voidHtml = isWaiterMode ? "" : `<button class="btn-mini btn-void" data-action="void">Void</button>`;
+
     row.innerHTML = `<div>
         <div class="l-name">${o.table_label || "Takeaway"} · ${sourceLabel} · <span style="text-transform:capitalize;">${o.status}</span></div>
         <div class="l-qty">${itemsText}</div>
       </div>
-      <div style="display:flex; align-items:center; gap:8px;">
+      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
         <span class="mono" style="font-size:12px;">${fmt(o.total)}</span>
-        ${actionHtml}
+        ${editHtml}
+        ${voidHtml}
+        ${nextActionHtml}
       </div>`;
-    if (waiterBlocked) return;
-    row.querySelector("button").onclick = async (e) => {
-      const next = e.target.dataset.next;
-      await updateOrderStatus(o.id, next, next === "closed" ? "cash" : null);
-      if (next === "closed") {
-        printReceipt({
-          tableLabel: o.table_label,
-          orderId: o.id,
-          items: o.items || [],
-          subtotal: o.subtotal,
-          tax: o.tax,
-          total: o.total,
-          paymentMethod: "cash",
-        });
-      }
-      pollIncomingOrders();
-    };
+
+    const advanceBtn = row.querySelector('[data-action="advance"]');
+    if (advanceBtn) {
+      advanceBtn.onclick = async () => {
+        await updateOrderStatus(o.id, nextAction, nextAction === "closed" ? "cash" : null);
+        if (nextAction === "closed") {
+          printReceipt({
+            tableLabel: o.table_label,
+            orderId: o.id,
+            items: o.items || [],
+            subtotal: o.subtotal,
+            tax: o.tax,
+            total: o.total,
+            paymentMethod: "cash",
+          });
+        }
+        pollIncomingOrders();
+      };
+    }
+
+    row.querySelector('[data-action="edit"]').onclick = () => startEditOrder(o);
+
+    const voidBtn = row.querySelector('[data-action="void"]');
+    if (voidBtn) {
+      voidBtn.onclick = async () => {
+        if (!confirm(`Void this order (${o.table_label || "Takeaway"}, ${fmt(o.total)})? This cancels it — it won't be counted as a sale, but stays in the record as voided.`)) return;
+        await voidOrder(o.id);
+        if (editingOrderId === o.id) cancelEditOrder();
+        pollIncomingOrders();
+      };
+    }
+
     wrap.appendChild(row);
   });
 }
@@ -451,6 +480,7 @@ function renderOrder() {
   const wrap = document.getElementById("order-lines");
   const totalsWrap = document.getElementById("order-totals");
   const printBtn = document.getElementById("btn-print");
+  printBtn.textContent = editingOrderId ? "Save changes to order" : (isWaiterMode ? "Send to kitchen" : "Print receipt & close order");
   if (order.length === 0) {
     wrap.innerHTML = `<div class="muted" style="text-align:center; padding:30px 10px; font-size:13px;">Tap items to add them to the order</div>`;
     totalsWrap.innerHTML = "";
@@ -476,6 +506,33 @@ function renderOrder() {
   printBtn.disabled = false;
 }
 
+function startEditOrder(o) {
+  editingOrderId = o.id;
+  order = (o.items || []).map((it, i) => ({
+    id: it.menu_item_id || `legacy-${i}`,
+    name: it.name,
+    price: it.price,
+    qty: it.qty,
+  }));
+  document.getElementById("order-panel-heading").textContent = `Editing ${o.table_label || "Takeaway"}`;
+  document.getElementById("edit-banner").style.display = "flex";
+  document.getElementById("table-select").style.display = "none";
+  document.getElementById("pay-select").style.display = "none";
+  renderOrder();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function cancelEditOrder() {
+  editingOrderId = null;
+  order = [];
+  document.getElementById("order-panel-heading").textContent = "New order";
+  document.getElementById("edit-banner").style.display = "none";
+  document.getElementById("table-select").style.display = "";
+  document.getElementById("pay-select").style.display = isWaiterMode ? "none" : "flex";
+  renderOrder();
+}
+document.getElementById("btn-cancel-edit").addEventListener("click", cancelEditOrder);
+
 document.getElementById("pay-select").addEventListener("click", (e) => {
   if (e.target.tagName !== "BUTTON") return;
   document.querySelectorAll("#pay-select button").forEach((b) => b.classList.remove("active"));
@@ -484,6 +541,21 @@ document.getElementById("pay-select").addEventListener("click", (e) => {
 });
 
 document.getElementById("btn-print").addEventListener("click", async () => {
+  if (editingOrderId) {
+    const result = await updateOrderItems(editingOrderId, order);
+    const toast = document.getElementById("toast");
+    if (result) {
+      toast.textContent = "Order updated";
+      cancelEditOrder();
+      pollIncomingOrders();
+    } else {
+      toast.textContent = "Couldn't save changes — order may have already been closed";
+    }
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 2200);
+    return;
+  }
+
   const tableId = document.getElementById("table-select").value;
   const tableLabel = (tables.find((t) => t.id === tableId) || {}).label;
   const created = await createOrder({

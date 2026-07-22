@@ -20,6 +20,13 @@
   const restaurantName = params.get("name") || "";
   const myId = getDeviceId();
 
+  // Sizing — original sprites are small (32x48 players, 32x32 ball) at
+  // this game's 800x600 resolution. Scaled up so they're easy to see
+  // and hit on a phone: players end up roughly half the goal's height,
+  // the ball a bit bigger without feeling cartoonish.
+  const PLAYER_SCALE = 2.8;
+  const BALL_SCALE = 1.6;
+
   // ---------------------------------------------------------------
   // Networking shim — gives Phaser scenes the same socket.io-shaped
   // API (`on`, `emit`, `.id`) the original game was written against,
@@ -310,6 +317,7 @@
     }
 
     addPlayerPhysics(self, player, spriteIndex) {
+      player.setScale(PLAYER_SCALE); // bigger, easier to see on a phone screen — about half the goal's height
       player.setBounce(0);
       player.setCollideWorldBounds(true);
       self.physics.add.collider(player, self.platforms);
@@ -339,8 +347,9 @@
       self.startGame = false;
       self.balls = self.physics.add.group();
       self.ball = self.balls.create(400, 16, "ball");
+      self.ball.setScale(BALL_SCALE); // a little bigger — easier to see and to hit
       self.ball.setBounce(0.6);
-      self.ball.setCircle();
+      self.ball.setCircle(16);
       self.ball.setFriction(0.005);
       self.ball.setCollideWorldBounds(true);
       self.physics.add.collider(self.ball, self.platforms);
@@ -373,13 +382,20 @@
     create(data) {
       const cx = this.cameras.main.worldView.x + this.cameras.main.width / 2;
       const cy = this.cameras.main.worldView.y + this.cameras.main.height / 2;
-      this.add.text(cx, cy - 40, data.won ? "You won! \u{1F3C6}" : "You lost!", {
+      this.add.text(cx, cy - 60, data.won ? "You won! \u{1F3C6}" : "You lost!", {
         fontSize: "52px",
         fill: data.won ? "#2F5D50" : "#B4482F",
       }).setOrigin(0.5);
-      this.add.text(cx, cy + 30, data.score, { fontSize: "44px", fill: "#fff" }).setOrigin(0.5);
-      this.add.text(cx, cy + 90, "Tap anywhere for a rematch", { fontSize: "18px", fill: "#ccc" }).setOrigin(0.5);
-      this.input.once("pointerdown", () => this.scene.start("GameScene"));
+      this.add.text(cx, cy, data.score, { fontSize: "44px", fill: "#fff" }).setOrigin(0.5);
+
+      // The on-screen "Play again" button (real HTML, not a canvas tap
+      // zone) does the actual restart — this is the same, proven-reliable
+      // mechanism the touch controls already use, rather than depending
+      // on a canvas-wide pointerdown listener that can be finicky inside
+      // an iframe on mobile.
+      window.__endScene = this;
+      const btn = document.getElementById("btn-play-again");
+      if (btn) btn.style.display = "block";
     }
   }
 
@@ -416,5 +432,14 @@
     const el = document.documentElement;
     if (el.requestFullscreen) el.requestFullscreen();
     else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  });
+
+  document.getElementById("btn-play-again").addEventListener("click", (e) => {
+    e.preventDefault();
+    if (window.__endScene) {
+      window.__endScene.scene.start("GameScene");
+      window.__endScene = null;
+    }
+    document.getElementById("btn-play-again").style.display = "none";
   });
 })();

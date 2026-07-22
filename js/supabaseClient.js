@@ -255,6 +255,22 @@ async function addItemsToOrder(orderId, cart) {
   return data[0];
 }
 
+// Replaces an order's full item list — used for editing/fixing an
+// order (wrong item, wrong quantity), as opposed to addItemsToOrder
+// which only ever adds more on top.
+async function updateOrderItems(orderId, cart) {
+  const items = cart.map((l) => ({ menu_item_id: l.id, name: l.name, price: l.price, qty: l.qty }));
+  const { data, error } = await supa.rpc("update_order_items", { p_order_id: orderId, p_items: items });
+  if (error || !data || data.length === 0) { console.error(error); return null; }
+  return data[0];
+}
+
+async function voidOrder(orderId) {
+  const { error } = await supa.rpc("void_order", { p_order_id: orderId });
+  if (error) { console.error(error); return false; }
+  return true;
+}
+
 // A stable per-device id (not tied to a login) so two phones scanning
 // the same table's QR can be told apart as "player 1" / "player 2" in
 // the waiting-room game, and so a page refresh doesn't lose your seat.

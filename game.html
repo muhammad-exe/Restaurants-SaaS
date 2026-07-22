@@ -29,6 +29,13 @@
     position:absolute; top:8px; right:8px; background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.35);
     color:#fff; border-radius:8px; padding:6px 10px; font-size:16px; cursor:pointer;
   }
+  #btn-play-again {
+    position:absolute; top:60%; left:50%; transform:translate(-50%, -50%);
+    background:#2F5D50; color:#fff; border:2px solid #fff; border-radius:12px;
+    padding:14px 28px; font-size:18px; font-weight:700; cursor:pointer; z-index:5;
+    box-shadow:0 4px 16px rgba(0,0,0,0.35);
+  }
+  #btn-play-again:active { background:#1D3B33; }
 </style>
 </head>
 <body>
@@ -39,6 +46,7 @@
   <button class="ctrl-btn" id="btn-right" aria-label="Move right">&#8594;</button>
   <button class="ctrl-btn" id="btn-jump" aria-label="Jump / kick">&#9650;</button>
   <button id="btn-fullscreen" title="Fullscreen">&#9974; Fullscreen</button>
+  <button id="btn-play-again" style="display:none;">Play again</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.54.0/dist/phaser.min.js"></script>

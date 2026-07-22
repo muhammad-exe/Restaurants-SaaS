@@ -4,7 +4,7 @@ This is a real, working app — not a demo. Order data is saved to an actual
 database, and it will keep working after you close the tab. Total cost to
 run this for your first several restaurants: **$0/month.**
 
-> **Already set up a Supabase project?** Eleven migration files may
+> **Already set up a Supabase project?** Twelve migration files may
 > apply to you, run in your Supabase SQL Editor in this order if you
 > haven't already:
 > 1. `supabase/migration_v2_security.sql` — locks down the database (see below)
@@ -18,6 +18,7 @@ run this for your first several restaurants: **$0/month.**
 > 9. `supabase/migration_v10_ring_bell_and_resume.sql` — adds the call-waiter ring bell system and order-resume-on-rescan
 > 10. `supabase/migration_v11_password_login.sql` — **replaces 4-digit PINs with real hashed passwords** — your team's old PINs still work as their password after this runs, nobody gets locked out
 > 11. `supabase/migration_v12_availability_and_addon.sql` — adds the "86 an item" toggle and the add-on-order flow
+> 12. `supabase/migration_v13_order_crud_and_fixes.sql` — adds order editing/voiding, and **fixes a real bug** where the customer waiting page only appeared for QR-placed orders, never ones staff entered on the POS
 >
 > All are safe to run more than once and don't touch your existing
 > tables or data.
@@ -136,6 +137,23 @@ something:
   login, then stays unlocked for the rest of that session, on the
   website, the desktop app, and the mobile app alike.
 
+## Editing and voiding orders — full CRUD
+
+Every signed-in staff member on the POS — cashier, waiter, manager, or
+owner — can now tap **"Edit"** on any order in the "Incoming orders"
+list to fix a mistake: wrong item, wrong quantity, whatever. It loads
+that order's real items into the order-building panel, the table and
+payment selectors hide (you're not moving the order or taking payment,
+just fixing its contents), and the button changes to **"Save changes
+to order."** Cancel is always available if you back out.
+
+**Voiding** an order — cancelling it outright — is restricted to
+cashier, manager, and owner (not waiter), matching the same pattern
+already used for closing/payment. It doesn't delete the order; it sets
+its status to `void` so it still shows up in your records as "this was
+cancelled" rather than disappearing, and it correctly stops counting
+toward sales totals.
+
 ## Marking an item out of stock ("86-ing" it)
 
 Any signed-in staff member — cashier, waiter, manager, or owner — can
@@ -187,7 +205,13 @@ already have for free, no separate server to run or pay for.
   keyboard (left/right arrows, up to jump) also works if tested on a
   laptop.
 - **Fullscreen button** in the top corner of the game.
-- First to 5 goals wins; tap anywhere on the end screen for a rematch.
+- **Characters and ball are sized up** from the original game — players
+  are roughly half the goal's height, the ball's a bit bigger too, so
+  everything's easy to see and hit on a phone screen.
+- First to 5 goals wins; a real **"Play again"** button appears on the
+  end screen (not a tap-anywhere zone, which turned out to be
+  unreliable inside an iframe on some phones — this button uses the
+  same proven mechanism as the on-screen movement controls).
 
 **One thing worth checking in your Supabase dashboard:** Realtime is
 on by default for new projects, but if your project is older or
@@ -437,7 +461,9 @@ solid.
 ## What's included vs. what's next
 
 **Working now:** menu browsing with dish photos, an **editable cart**
-(add/adjust/remove before ordering), order creation, order closing
+(add/adjust/remove before ordering), order creation, **full order
+CRUD** (edit an order's items, void an order — every staff role can
+edit, voiding is restricted like closing/payment is), order closing
 with payment method, table-based QR ordering, **item availability
 toggle** ("86-ing" a dish, live on the customer menu), an **add-on
 order flow** for rescanning mid-meal, owner dashboard with real
@@ -446,20 +472,21 @@ sales/top-items/order-source queries filtered by day/week/month and
 on both POS and dashboard (role-restricted, full CRUD via the Staff
 panel), a live **incoming orders panel on the POS**, **role-based POS
 screens** (waiters can't take payment), **real receipt printing**, a
-**live order tracker + rotating facts + resume-on-rescan + a
-call-waiter button + a real 2-player football game with on-screen
-controls and fullscreen** on the customer's waiting screen, a **real
-call-waiter ring bell** (long, loud ringtone with vibration and OS
-notifications) that reaches POS and the owner dashboard together, with
-staff mute and owner escalation past 5 rings, a **QR code
-generator/printer page**, an **installable POS app** (PWA, with a path
-to a real `.apk` via PWABuilder or the Capacitor project in
-`native/mobile`), a working **desktop app** (`native/desktop`), a
-**real, working WhatsApp receipt button** (tap-to-send, free, no Meta
-approval needed), a visual polish pass across the dashboard and POS
-(depth, hover states, a more premium login screen), and a locked-down
-database where writes and staff data only go through safe functions
-instead of open table access.
+**live order tracker + rotating facts + resume-on-rescan (now correct
+for POS-entered orders too, not just QR ones) + a call-waiter button +
+a real 2-player football game with bigger characters, on-screen
+controls, a reliable "Play again" button, and fullscreen** on the
+customer's waiting screen, a **real call-waiter ring bell** (long,
+loud ringtone with vibration and OS notifications) that reaches POS
+and the owner dashboard together, with staff mute and owner escalation
+past 5 rings, a **QR code generator/printer page**, an **installable
+POS app** (PWA, with a path to a real `.apk` via PWABuilder or the
+Capacitor project in `native/mobile`), a working **desktop app**
+(`native/desktop`), a **real, working WhatsApp receipt button**
+(tap-to-send, free, no Meta approval needed), a visual polish pass
+across the dashboard and POS (depth, hover states, a more premium
+login screen), and a locked-down database where writes and staff data
+only go through safe functions instead of open table access.
 
 **Stubbed / not yet built:** fully silent/automatic WhatsApp sending
 (possible later via Meta's API once you have approval — see above, not
