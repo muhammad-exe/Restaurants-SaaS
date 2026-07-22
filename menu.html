@@ -374,7 +374,7 @@ function renderOrderConfirmation(order, cartItems, opts) {
       ${showGameTab ? `
         <div class="oc-tabs">
           <button class="oc-tab active" id="tab-facts">While you wait</button>
-          <button class="oc-tab" id="tab-game">&#9917; Goal Rush</button>
+          <button class="oc-tab" id="tab-game">&#9917; 2-Player Football</button>
         </div>
         <div class="oc-panel active" id="panel-facts">
           <div class="oc-fact-card" id="oc-fact-card"></div>
@@ -400,7 +400,7 @@ function renderOrderConfirmation(order, cartItems, opts) {
   if (showGameTab) {
     document.getElementById("tab-facts").addEventListener("click", () => switchTrackerTab("facts"));
     document.getElementById("tab-game").addEventListener("click", () => switchTrackerTab("game"));
-    joinGoalRush(order.id);
+    loadGameFrame(order.id);
   }
 
   startOrderTracking(order.id, order.status);
@@ -470,147 +470,38 @@ function startOrderTracking(orderId, initialStatus) {
 }
 
 // ---------------------------------------------------------------------
-// "Goal Rush" — two-player penalty shootout on the waiting page. Both
-// customers at the table scan the same QR after ordering; whoever
-// joins first is Player 1 (striker for round 1), whoever joins second
-// is Player 2. They take turns shooting/saving; the score is shared.
+// Two-player football game — lives entirely in game.html, loaded in an
+// iframe so Phaser's own game loop and canvas don't fight with this
+// page's polling. We just tell it which table/order this is for (so
+// two phones scanning the same table's QR end up in the same match)
+// and hand it a fullscreen button.
 // ---------------------------------------------------------------------
-let gameSession = null;
-let gamePlayerNum = null;
-let gamePollTimer = null;
-let gameOrderId = null;
-let lastRenderedPhaseKey = null; // avoids re-rendering (and losing button hover state) every poll tick
+let gameFrameLoaded = false;
 
 function stopGamePolling() {
-  if (gamePollTimer) { clearInterval(gamePollTimer); gamePollTimer = null; }
-  gameSession = null;
-  gamePlayerNum = null;
-  lastRenderedPhaseKey = null;
+  gameFrameLoaded = false;
 }
 
-async function joinGoalRush(orderId) {
-  gameOrderId = orderId;
-  const s = await gameJoin(currentTable.id, orderId, deviceId);
-  if (!s) return;
-  gameSession = s;
-  gamePlayerNum = s.player1_id === deviceId ? 1 : s.player2_id === deviceId ? 2 : null;
-  renderGoalRush();
-  gamePollTimer = setInterval(async () => {
-    const fresh = await gameState(gameSession.id);
-    if (!fresh) return;
-    gameSession = fresh;
-    renderGoalRush();
-  }, 1300);
-}
-
-function renderGoalRush() {
+function loadGameFrame(orderId) {
   const wrap = document.getElementById("gr-wrap");
-  if (!wrap || !gameSession) return;
-  const s = gameSession;
-  const key = `${s.phase}-${s.round}-${s.shot_zone}-${s.save_zone}-${s.score1}-${s.score2}`;
-  if (key === lastRenderedPhaseKey) return;
-  lastRenderedPhaseKey = key;
-
-  const youAreStriker = s.turn_striker === gamePlayerNum;
-  const scoreLabel = `<div class="gr-score-row">
-      <div class="gr-score">${s.score1} <span style="color:#8B8474; font-size:14px;">–</span> ${s.score2}</div>
-      <div class="gr-round">Round ${s.round}${gamePlayerNum ? ` · You're Player ${gamePlayerNum}` : ""}</div>
+  if (!wrap || gameFrameLoaded) return;
+  gameFrameLoaded = true;
+  const sessionKey = currentTable ? currentTable.id : orderId;
+  wrap.innerHTML = `
+    <div class="game-frame-wrap">
+      <iframe
+        id="game-iframe"
+        src="game.html?session=${encodeURIComponent(sessionKey)}&name=${encodeURIComponent(CURRENT_RESTAURANT.name)}"
+        class="game-iframe"
+        allow="fullscreen"
+        allowfullscreen></iframe>
+      <button class="game-fullscreen-btn" id="btn-game-fullscreen" title="Fullscreen">&#9974;</button>
     </div>`;
-
-  if (s.phase === "waiting") {
-    wrap.innerHTML = `
-      ${scoreLabel}
-      <div class="gr-waiting">
-        <div class="gr-waiting-icon">&#9917;</div>
-        Waiting for a second player…<br>Ask whoever you're dining with to scan this table's QR code too, then tap "Goal Rush" here.
-      </div>`;
-    return;
-  }
-
-  const zones = ["left", "center", "right"];
-  const zoneIcon = { left: "&#8592;", center: "&#8226;", right: "&#8594;" };
-
-  if (s.phase === "ready") {
-    if (youAreStriker) {
-      wrap.innerHTML = `
-        ${scoreLabel}
-        <div class="gr-status">Your turn — pick a corner to shoot!</div>
-        <div class="gr-pitch"><div class="gr-goal">
-          ${zones.map((z) => `<button class="gr-zone" data-zone="${z}">${zoneIcon[z]}</button>`).join("")}
-        </div></div>`;
-      wrap.querySelectorAll(".gr-zone").forEach((btn) => {
-        btn.onclick = async () => {
-          wrap.querySelectorAll(".gr-zone").forEach((b) => b.disabled = true);
-          await gameShoot(gameSession.id, deviceId, btn.dataset.zone);
-          lastRenderedPhaseKey = null;
-          const fresh = await gameState(gameSession.id);
-          if (fresh) { gameSession = fresh; renderGoalRush(); }
-        };
-      });
-    } else {
-      wrap.innerHTML = `
-        ${scoreLabel}
-        <div class="gr-status">Get ready — your opponent is lining up a shot…</div>
-        <div class="gr-pitch"><div class="gr-goal">
-          ${zones.map((z) => `<button class="gr-zone disabled" disabled>${zoneIcon[z]}</button>`).join("")}
-        </div></div>`;
-    }
-    return;
-  }
-
-  if (s.phase === "shot_pending") {
-    if (!youAreStriker) {
-      wrap.innerHTML = `
-        ${scoreLabel}
-        <div class="gr-status">Shot's coming — dive to save it!</div>
-        <div class="gr-pitch"><div class="gr-goal">
-          ${zones.map((z) => `<button class="gr-zone" data-zone="${z}">&#129485;</button>`).join("")}
-        </div></div>`;
-      wrap.querySelectorAll(".gr-zone").forEach((btn) => {
-        btn.onclick = async () => {
-          wrap.querySelectorAll(".gr-zone").forEach((b) => b.disabled = true);
-          await gameSave(gameSession.id, deviceId, btn.dataset.zone);
-          lastRenderedPhaseKey = null;
-          const fresh = await gameState(gameSession.id);
-          if (fresh) { gameSession = fresh; renderGoalRush(); }
-        };
-      });
-    } else {
-      wrap.innerHTML = `
-        ${scoreLabel}
-        <div class="gr-status">Ball's in the air — waiting for the keeper…</div>
-        <div class="gr-pitch"><div class="gr-goal">
-          ${zones.map((z) => `<button class="gr-zone ${z === s.shot_zone ? "picked" : "disabled"}" disabled>&#9917;</button>`).join("")}
-        </div></div>`;
-    }
-    return;
-  }
-
-  if (s.phase === "resolved") {
-    const wasGoal = s.result === "goal";
-    const scorerNum = s.turn_striker; // striker of the round that just resolved
-    const scorerIsYou = scorerNum === gamePlayerNum;
-    let resultText;
-    if (wasGoal) resultText = scorerIsYou ? "GOAL! You scored!" : "GOAL! Your opponent scored.";
-    else resultText = scorerIsYou ? "Saved! Your shot was stopped." : "Nice save! You stopped it.";
-
-    wrap.innerHTML = `
-      ${scoreLabel}
-      <div class="gr-pitch">
-        <div class="gr-goal">
-          ${zones.map((z) => `<button class="gr-zone ${z === s.shot_zone ? "picked" : "disabled"}" disabled>&#9917;</button>`).join("")}
-        </div>
-        <div class="gr-result-flash show">${resultText}</div>
-      </div>
-      <button class="gr-next-btn" id="gr-next">Next round &#8594;</button>`;
-    document.getElementById("gr-next").addEventListener("click", async (e) => {
-      e.target.disabled = true;
-      await gameNextRound(gameSession.id);
-      lastRenderedPhaseKey = null;
-      const fresh = await gameState(gameSession.id);
-      if (fresh) { gameSession = fresh; renderGoalRush(); }
-    });
-  }
+  document.getElementById("btn-game-fullscreen").addEventListener("click", () => {
+    const frame = document.getElementById("game-iframe");
+    if (frame.requestFullscreen) frame.requestFullscreen();
+    else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
+  });
 }
 
 init();

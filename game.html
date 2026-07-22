@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>2-Player Football</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  html, body { margin:0; padding:0; background:#0B2A1F; overflow:hidden; height:100%; width:100%; touch-action:none; }
+  #game-wrap { position:relative; width:100%; height:100%; display:flex; flex-direction:column; }
+  #game-title {
+    font-family:'Fraunces', Georgia, serif; color:#fff; text-align:center; font-size:14px;
+    padding:8px 6px; background:#0B2A1F; letter-spacing:0.2px;
+  }
+  #phaser-container { flex:1; display:flex; align-items:center; justify-content:center; min-height:0; background:#0B2A1F; }
+  #phaser-container canvas { max-width:100%; max-height:100%; }
+
+  .ctrl-btn {
+    position:absolute; bottom:22px; width:64px; height:64px; border-radius:50%;
+    background:rgba(255,255,255,0.14); border:2px solid rgba(255,255,255,0.35);
+    color:#fff; font-size:26px; display:flex; align-items:center; justify-content:center;
+    user-select:none; -webkit-user-select:none; touch-action:none;
+  }
+  .ctrl-btn:active { background:rgba(255,255,255,0.3); }
+  #btn-left { left:20px; }
+  #btn-right { left:96px; }
+  #btn-jump { right:20px; bottom:22px; width:76px; height:76px; background:rgba(47,93,80,0.55); border-color:rgba(255,255,255,0.5); }
+
+  #btn-fullscreen {
+    position:absolute; top:8px; right:8px; background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.35);
+    color:#fff; border-radius:8px; padding:6px 10px; font-size:16px; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+<div id="game-wrap">
+  <div id="game-title">2-Player Football</div>
+  <div id="phaser-container"></div>
+  <button class="ctrl-btn" id="btn-left" aria-label="Move left">&#8592;</button>
+  <button class="ctrl-btn" id="btn-right" aria-label="Move right">&#8594;</button>
+  <button class="ctrl-btn" id="btn-jump" aria-label="Jump / kick">&#9650;</button>
+  <button id="btn-fullscreen" title="Fullscreen">&#9974; Fullscreen</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.54.0/dist/phaser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>

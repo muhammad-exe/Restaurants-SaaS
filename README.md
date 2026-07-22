@@ -4,9 +4,9 @@ This is a real, working app — not a demo. Order data is saved to an actual
 database, and it will keep working after you close the tab. Total cost to
 run this for your first several restaurants: **$0/month.**
 
-> **Already set up a Supabase project?** Ten migration files may apply
-> to you, run in your Supabase SQL Editor in this order if you haven't
-> already:
+> **Already set up a Supabase project?** Eleven migration files may
+> apply to you, run in your Supabase SQL Editor in this order if you
+> haven't already:
 > 1. `supabase/migration_v2_security.sql` — locks down the database (see below)
 > 2. `supabase/migration_v3_menu_images.sql` — adds photos to the demo menu items
 > 3. `supabase/migration_v4_order_status.sql` — adds the function powering the customer's live order tracker
@@ -17,9 +17,15 @@ run this for your first several restaurants: **$0/month.**
 > 8. `supabase/migration_v9_receipt_printing.sql` — adds per-item pricing to incoming orders, needed for real receipt printing
 > 9. `supabase/migration_v10_ring_bell_and_resume.sql` — adds the call-waiter ring bell system and order-resume-on-rescan
 > 10. `supabase/migration_v11_password_login.sql` — **replaces 4-digit PINs with real hashed passwords** — your team's old PINs still work as their password after this runs, nobody gets locked out
+> 11. `supabase/migration_v12_availability_and_addon.sql` — adds the "86 an item" toggle and the add-on-order flow
 >
 > All are safe to run more than once and don't touch your existing
 > tables or data.
+>
+> **The 2-player football game needs no migration at all** — it doesn't
+> use the database, only Supabase Realtime (already part of your
+> project), so there's nothing to run for it. See the section below
+> for the one thing worth double-checking in your Supabase dashboard.
 
 It has three pages:
 - `pos.html` — the cashier screen — now also shows **live incoming
@@ -129,6 +135,72 @@ something:
   they load. The beep is "unlocked" the moment staff tap "Sign in" at
   login, then stays unlocked for the rest of that session, on the
   website, the desktop app, and the mobile app alike.
+
+## Marking an item out of stock ("86-ing" it)
+
+Any signed-in staff member — cashier, waiter, manager, or owner — can
+tap the small ✕ in the corner of an item's card on the POS to mark it
+out of stock. It grays out immediately with an "Out of stock" badge
+and can't be tapped to add to an order from the POS. The customer QR
+menu picks up the change automatically — a sold-out dish disappears
+from their menu the next time it polls (every 15 seconds while
+they're browsing), and if it was already in their cart when it sold
+out, it's quietly removed with a heads-up message rather than letting
+them order something that no longer exists. Tap the ↻ that appears on
+a grayed-out item to bring it back in stock.
+
+## Add-on orders — rescanning a table mid-meal
+
+If a customer scans their table's QR code while they already have an
+order in progress, they now get a real choice instead of the app
+deciding for them:
+- **"Add more items to my order"** — takes them back into the menu;
+  whatever they add gets appended to the *same* order (not a separate
+  one), and if the kitchen had already marked it "preparing" or
+  "ready," it correctly bumps back to "open" so the new items don't
+  get missed.
+- **"View my order & wait time"** — goes straight to the live tracker,
+  same as before.
+
+## Two-player football — the real game, not a placeholder
+
+The waiting page has a second tab, **"⚽ 2-Player Football"**, next to
+the food-facts tab. This is the actual side-scrolling football game
+(sprites, physics, jumping, kicking) — not a simplified
+guess-a-corner minigame.
+
+**How the multiplayer works:** the original game was written for a
+dedicated Node.js + socket.io server, which this app doesn't have —
+only Supabase. So the networking layer was swapped for **Supabase
+Realtime** (broadcast + presence), which does the same job (instant
+position/ball sync between two phones) using infrastructure you
+already have for free, no separate server to run or pay for.
+
+- The **first phone** to open the game tab at a given table becomes
+  Player 1; the **second** becomes Player 2 — matched automatically by
+  table, so only people at the same table end up in the same match.
+- A third phone scanning the same table sees a "match is full"
+  message rather than breaking the other two players' game.
+- **Controls**: on-screen left/right buttons plus a jump button
+  (bottom of the screen) — kicking happens automatically when your
+  player touches the ball, same as the original game. A physical
+  keyboard (left/right arrows, up to jump) also works if tested on a
+  laptop.
+- **Fullscreen button** in the top corner of the game.
+- First to 5 goals wins; tap anywhere on the end screen for a rematch.
+
+**One thing worth checking in your Supabase dashboard:** Realtime is
+on by default for new projects, but if your project is older or
+you've changed settings, confirm it under **Project Settings →
+API → Realtime** (or **Database → Replication** depending on your
+dashboard version) — broadcast and presence (what this game uses)
+don't need any table-level replication turned on, just Realtime
+itself enabled at the project level.
+
+**Files involved, if you ever want to change the game:**
+`game.html` (the screen + on-screen controls), `js/game.js` (the game
+logic and the Realtime networking), `game-assets/` (sprites and
+images — swap these for your own art if you want to reskin it).
 
 ## Order resume — customer accidentally closes the tracker screen
 
@@ -366,22 +438,28 @@ solid.
 
 **Working now:** menu browsing with dish photos, an **editable cart**
 (add/adjust/remove before ordering), order creation, order closing
-with payment method, table-based QR ordering, owner dashboard with
-real sales/top-items/order-source queries filtered by day/week/month
-and **auto-refreshing every 20 seconds**, **real hashed password
-login** on both POS and dashboard (role-restricted, full CRUD via the
-Staff panel), a live **incoming orders panel on the POS**,
-**role-based POS screens** (waiters can't take payment), **real
-receipt printing**, a **live order tracker + rotating facts +
-resume-on-rescan + a call-waiter button** on the customer's screen, a
-**real call-waiter ring bell that reaches POS and the owner dashboard
-together**, with staff mute and owner escalation past 5 rings, a **QR
-code generator/printer page**, an **installable POS app** (PWA, with
-a path to a real `.apk` via PWABuilder or the Capacitor project in
+with payment method, table-based QR ordering, **item availability
+toggle** ("86-ing" a dish, live on the customer menu), an **add-on
+order flow** for rescanning mid-meal, owner dashboard with real
+sales/top-items/order-source queries filtered by day/week/month and
+**auto-refreshing every 20 seconds**, **real hashed password login**
+on both POS and dashboard (role-restricted, full CRUD via the Staff
+panel), a live **incoming orders panel on the POS**, **role-based POS
+screens** (waiters can't take payment), **real receipt printing**, a
+**live order tracker + rotating facts + resume-on-rescan + a
+call-waiter button + a real 2-player football game with on-screen
+controls and fullscreen** on the customer's waiting screen, a **real
+call-waiter ring bell** (long, loud ringtone with vibration and OS
+notifications) that reaches POS and the owner dashboard together, with
+staff mute and owner escalation past 5 rings, a **QR code
+generator/printer page**, an **installable POS app** (PWA, with a path
+to a real `.apk` via PWABuilder or the Capacitor project in
 `native/mobile`), a working **desktop app** (`native/desktop`), a
 **real, working WhatsApp receipt button** (tap-to-send, free, no Meta
-approval needed), and a locked-down database where writes and staff
-data only go through safe functions instead of open table access.
+approval needed), a visual polish pass across the dashboard and POS
+(depth, hover states, a more premium login screen), and a locked-down
+database where writes and staff data only go through safe functions
+instead of open table access.
 
 **Stubbed / not yet built:** fully silent/automatic WhatsApp sending
 (possible later via Meta's API once you have approval — see above, not

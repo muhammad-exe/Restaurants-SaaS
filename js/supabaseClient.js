@@ -268,30 +268,6 @@ function getDeviceId() {
   return id;
 }
 
-// ---- "Goal Rush" two-player waiting-room game ----
-async function gameJoin(tableId, orderId, playerId) {
-  const { data, error } = await supa.rpc("game_join", { p_table_id: tableId, p_order_id: orderId, p_player_id: playerId });
-  if (error || !data || data.length === 0) { console.error(error); return null; }
-  return data[0];
-}
-async function gameState(sessionId) {
-  const { data, error } = await supa.rpc("game_state", { p_session_id: sessionId });
-  if (error || !data || data.length === 0) return null;
-  return data[0];
-}
-async function gameShoot(sessionId, playerId, zone) {
-  const { error } = await supa.rpc("game_shoot", { p_session_id: sessionId, p_player_id: playerId, p_zone: zone });
-  if (error) console.error(error);
-}
-async function gameSave(sessionId, playerId, zone) {
-  const { error } = await supa.rpc("game_save", { p_session_id: sessionId, p_player_id: playerId, p_zone: zone });
-  if (error) console.error(error);
-}
-async function gameNextRound(sessionId) {
-  const { error } = await supa.rpc("game_next_round", { p_session_id: sessionId });
-  if (error) console.error(error);
-}
-
 function buildWhatsAppReceiptLink(order, cart) {
   if (!CURRENT_RESTAURANT.whatsapp_number) return null;
   const lines = cart.map((l) => `${l.qty}x ${l.name} - ${CURRENT_RESTAURANT.currency} ${Math.round(l.price * l.qty)}`);
