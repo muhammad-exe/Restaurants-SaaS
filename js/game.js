@@ -18,7 +18,23 @@
   const params = new URLSearchParams(window.location.search);
   const sessionKey = params.get("session") || "default-table";
   const restaurantName = params.get("name") || "";
-  const myId = getDeviceId();
+  // Deliberately NOT using getDeviceId() here — that's stored in
+  // localStorage, which is shared across every tab on the same
+  // device/browser. Two players opening the game in two tabs on the
+  // SAME phone (a very natural way to test this) would then get the
+  // identical ID, and Supabase Realtime would see only one presence
+  // entry instead of two — exactly the "player 2 sees nothing" bug.
+  // sessionStorage is per-tab, so each tab always gets its own id.
+  function getGameSessionId() {
+    const key = "dastarkhwan_game_session_id";
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `game-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      sessionStorage.setItem(key, id);
+    }
+    return id;
+  }
+  const myId = getGameSessionId();
 
   // Sizing — original sprites are small (32x48 players, 32x32 ball) at
   // this game's 800x600 resolution. Scaled up so they're easy to see
@@ -60,7 +76,12 @@
 
       this.channel.subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          this.channel.track({ id: this.id, joinedAt: Date.now() });
+          this.channel.track({ id: this.id, joinedAt: Date.now() }).then(() => {
+            // Don't just wait for the next 'sync' event to notice our
+            // own join — process it immediately so a slow/delayed sync
+            // event can't leave this player stuck seeing nothing.
+            this._syncPresence();
+          });
         }
       });
     }
@@ -102,6 +123,15 @@
 
     on(event, cb) {
       (this.listeners[event] = this.listeners[event] || []).push(cb);
+    }
+
+    // Called when the scene restarts (e.g. "Play again") — clears out
+    // the PREVIOUS scene instance's callbacks. Without this, every
+    // restart stacks a new set of listeners on top of the old ones,
+    // so old (now-destroyed) scene objects keep getting referenced by
+    // stale callbacks and things silently break after a rematch.
+    clearListeners() {
+      this.listeners = {};
     }
 
     emit(event, data) {
@@ -175,6 +205,7 @@
     create() {
       var self = this;
       this.net = window.gameNetwork;
+      this.net.clearListeners(); // wipe out any listeners left over from a previous match/restart
       this.otherPlayer = null;
 
       this.net.on("currentPlayers", function (players) {
@@ -218,6 +249,16 @@
           self.ball.y = playerInfo.ballY;
         }
       });
+
+      // If we already know about players from before (a "Play again"
+      // restart, not a fresh page load), nothing will trigger a new
+      // Supabase presence event — nobody actually joined or left. So
+      // replay what we already know straight to the listeners we just
+      // registered, instead of waiting forever for an event that will
+      // never come.
+      if (Object.keys(this.net.players).length > 0) {
+        this.net._fire("currentPlayers", { ...this.net.players });
+      }
 
       this.add.image(400, 300, "sky");
 
@@ -422,11 +463,23 @@
     scene: [BootScene, PreloadScene, GameScene, EndScene],
   };
 
-  new Phaser.Game(config);
+  const phaserGame = new Phaser.Game(config);
 
   wireTouchButton("btn-left", "left");
   wireTouchButton("btn-right", "right");
   wireTouchButton("btn-jump", "up");
+
+  // Phaser's Scale Manager doesn't always notice the container
+  // resizing on its own when entering/exiting fullscreen or when the
+  // surrounding page (e.g. a tablet in landscape) changes size — a
+  // known rough edge with Phaser inside an iframe. Forcing a refresh
+  // on these events fixes the game looking wrong/cut off on larger
+  // screens.
+  ["fullscreenchange", "webkitfullscreenchange", "resize"].forEach((evt) => {
+    window.addEventListener(evt, () => {
+      setTimeout(() => phaserGame.scale.refresh(), 100);
+    });
+  });
 
   document.getElementById("btn-fullscreen").addEventListener("click", () => {
     const el = document.documentElement;

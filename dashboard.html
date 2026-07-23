@@ -11,7 +11,7 @@
 <div class="app">
   <div class="topbar">
     <div class="brand">
-      <div class="brand-mark">D</div>
+      <div class="brand-mark" id="brand-mark">D</div>
       <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Owner dashboard</div></div>
     </div>
     <div class="nav-links">
@@ -78,6 +78,17 @@
       </div>
       <div class="staff-error" id="staff-error"></div>
     </div>
+
+    <div class="panel card" style="margin-top:16px;">
+      <h4>Tables</h4>
+      <p class="muted" style="font-size:12px; margin-bottom:12px;">Add a table and it gets its own unique QR code automatically — print it from the <a href="qr-codes.html">Table QR codes</a> page.</p>
+      <div id="tables-list"></div>
+      <div class="staff-add-form" id="table-add-form">
+        <input type="text" id="table-label" placeholder="e.g. Table 5, Patio 2">
+        <button id="btn-add-table">Add table</button>
+      </div>
+      <div class="staff-error" id="table-error"></div>
+    </div>
   </div>
 </div>
 <div class="call-popup-wrap" id="call-popup-wrap"></div>
@@ -97,6 +108,7 @@ async function init() {
     return;
   }
   document.getElementById("r-name").textContent = r.name;
+  applyBrandMark("brand-mark");
   document.getElementById("loading").style.display = "none";
   document.getElementById("pin-gate").style.display = "block";
   document.getElementById("password-input").focus();
@@ -119,6 +131,7 @@ async function attemptLogin() {
     document.getElementById("btn-logout").onclick = () => window.location.reload();
     await renderPeriod(1);
     await renderStaffList();
+    await renderTablesList();
     setInterval(() => renderPeriod(currentPeriodDays), 20000);
     document.getElementById("bell-btn").style.display = "block";
     updateBellIcon();
@@ -407,6 +420,40 @@ document.getElementById("btn-add-staff").addEventListener("click", async () => {
   document.getElementById("staff-name").value = "";
   document.getElementById("staff-pin").value = "";
   renderStaffList();
+});
+
+async function renderTablesList() {
+  const tables = await listTables(CURRENT_RESTAURANT.id);
+  const wrap = document.getElementById("tables-list");
+  wrap.innerHTML = tables.length
+    ? tables.map((t) => `<div class="top-item-row">
+        <span class="ti-name">${t.label}</span>
+        <button class="btn-mini" data-remove-table="${t.id}">Remove</button>
+      </div>`).join("")
+    : `<div class="muted" style="font-size:13px;">No tables added yet.</div>`;
+
+  wrap.querySelectorAll("[data-remove-table]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Remove this table? Its QR code will stop working.")) return;
+      await removeTable(btn.dataset.removeTable);
+      renderTablesList();
+    });
+  });
+}
+
+document.getElementById("btn-add-table").addEventListener("click", async () => {
+  const label = document.getElementById("table-label").value.trim();
+  const errorEl = document.getElementById("table-error");
+  errorEl.textContent = "";
+  if (!label) { errorEl.textContent = "Enter a table name or number."; return; }
+
+  const result = await addTable(CURRENT_RESTAURANT.id, label);
+  if (result.error) {
+    errorEl.textContent = result.error;
+    return;
+  }
+  document.getElementById("table-label").value = "";
+  renderTablesList();
 });
 
 init();

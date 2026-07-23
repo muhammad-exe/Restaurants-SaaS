@@ -1,4 +1,4 @@
-const CACHE_NAME = "dastarkhwan-pos-v1";
+const CACHE_NAME = "dastarkhwan-pos-v2";
 const SHELL_FILES = [
   "pos.html",
   "css/style.css",
@@ -7,6 +7,7 @@ const SHELL_FILES = [
   "manifest.json",
   "icons/icon-192.png",
   "icons/icon-512.png",
+  "branding/chai-jaan-logo.png",
 ];
 
 self.addEventListener("install", (event) => {

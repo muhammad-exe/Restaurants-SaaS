@@ -15,6 +15,7 @@ create table restaurants (
   currency text default 'PKR',
   tax_rate numeric default 0.05,      -- 5% default, editable per restaurant
   whatsapp_number text,               -- restaurant's WhatsApp Business number (for later API wiring)
+  logo_url text,                      -- shown in the header of every screen if set
   created_at timestamptz default now()
 );
 
@@ -644,6 +645,49 @@ begin
 end;
 $$;
 grant execute on function void_order to anon;
+
+-- ---------- Table management (owner adds/removes tables, auto QR) ----------
+create or replace function list_tables(p_restaurant_id uuid)
+returns table (id uuid, label text, qr_token text)
+language plpgsql security definer as $$
+begin
+  return query
+    select t.id, t.label, t.qr_token
+    from restaurant_tables t
+    where t.restaurant_id = p_restaurant_id
+    order by t.label asc;
+end;
+$$;
+grant execute on function list_tables to anon;
+
+-- Auto-generates a unique QR token — the owner never has to think
+-- about it, and it can never collide with an existing one.
+create or replace function add_table(p_restaurant_id uuid, p_label text)
+returns table (id uuid, label text, qr_token text)
+language plpgsql security definer as $$
+declare
+  v_token text;
+begin
+  v_token := lower(regexp_replace(p_restaurant_id::text, '-.*', '')) || '-' || replace(gen_random_uuid()::text, '-', '');
+  v_token := substr(v_token, 1, 20);
+
+  return query
+    insert into restaurant_tables (restaurant_id, label, qr_token)
+    values (p_restaurant_id, p_label, v_token)
+    returning restaurant_tables.id, restaurant_tables.label, restaurant_tables.qr_token;
+end;
+$$;
+grant execute on function add_table to anon;
+
+create or replace function remove_table(p_table_id uuid)
+returns void
+language plpgsql security definer as $$
+begin
+  update orders set table_id = null where table_id = p_table_id;
+  delete from restaurant_tables where id = p_table_id;
+end;
+$$;
+grant execute on function remove_table to anon;
 
 
 -- ============================================================

@@ -22,6 +22,19 @@ async function loadRestaurant() {
   }
 }
 
+// Swaps the plain "D" brand-mark for the restaurant's real logo, if it
+// has one set. Falls back to the letter mark for restaurants without
+// a logo_url (e.g. the demo data) — never left blank either way.
+function applyBrandMark(elId) {
+  const el = document.getElementById(elId);
+  if (!el || !CURRENT_RESTAURANT) return;
+  if (CURRENT_RESTAURANT.logo_url) {
+    el.innerHTML = `<img src="${CURRENT_RESTAURANT.logo_url}" alt="${CURRENT_RESTAURANT.name}" class="brand-logo-img" onerror="this.parentElement.textContent='${(CURRENT_RESTAURANT.name || 'D')[0]}'">`;
+  } else {
+    el.textContent = (CURRENT_RESTAURANT.name || "D")[0];
+  }
+}
+
 async function loadMenu(restaurantId) {
   const { data: categories, error: catErr } = await supa
     .from("categories")
@@ -114,7 +127,8 @@ async function updateOrderStatus(orderId, status, paymentMethod) {
     p_status: status,
     p_payment_method: paymentMethod || null,
   });
-  if (error) console.error(error);
+  if (error) { console.error(error); return false; }
+  return true;
 }
 
 // Returns every order still in progress (open/preparing/ready) for the
@@ -267,6 +281,24 @@ async function updateOrderItems(orderId, cart) {
 
 async function voidOrder(orderId) {
   const { error } = await supa.rpc("void_order", { p_order_id: orderId });
+  if (error) { console.error(error); return false; }
+  return true;
+}
+
+async function listTables(restaurantId) {
+  const { data, error } = await supa.rpc("list_tables", { p_restaurant_id: restaurantId });
+  if (error) { console.error(error); return []; }
+  return data;
+}
+
+async function addTable(restaurantId, label) {
+  const { data, error } = await supa.rpc("add_table", { p_restaurant_id: restaurantId, p_label: label });
+  if (error) return { error: error.message };
+  return { data: data[0] };
+}
+
+async function removeTable(tableId) {
+  const { error } = await supa.rpc("remove_table", { p_table_id: tableId });
   if (error) { console.error(error); return false; }
   return true;
 }

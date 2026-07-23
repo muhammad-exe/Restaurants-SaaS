@@ -47,8 +47,12 @@ function clearTimers() {
 }
 
 function headerHtml() {
+  const logoHtml = CURRENT_RESTAURANT.logo_url
+    ? `<img src="${CURRENT_RESTAURANT.logo_url}" alt="" class="menu-header-logo" onerror="this.style.display='none'">`
+    : "";
   return `
     <div class="menu-header">
+      ${logoHtml}
       <div class="r-name" id="r-name">${CURRENT_RESTAURANT.name}</div>
       <div class="r-table" id="r-table">${currentTable ? `${currentTable.label} · Dine-in` : "Takeaway order"}</div>
       <button class="call-waiter-btn" id="btn-call-waiter">&#128276; Call waiter</button>

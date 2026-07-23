@@ -7,14 +7,14 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#2F5D50">
+<meta name="theme-color" content="#E86A20">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 </head>
 <body>
 <div class="app">
   <div class="topbar">
     <div class="brand">
-      <div class="brand-mark">D</div>
+      <div class="brand-mark" id="brand-mark">D</div>
       <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Cashier POS</div></div>
     </div>
     <div class="nav-links"></div>
@@ -92,6 +92,7 @@ async function init() {
     return;
   }
   document.getElementById("r-name").textContent = r.name;
+  applyBrandMark("brand-mark");
   menu = await loadFullMenu(r.id);
 
   const { data: tableRows } = await supa.from("restaurant_tables").select("*").eq("restaurant_id", r.id);
@@ -143,30 +144,36 @@ document.getElementById("password-input").addEventListener("keydown", (e) => {
 });
 
 function printReceipt({ tableLabel, orderId, items, subtotal, tax, total, paymentMethod }) {
-  const dateStr = new Date().toLocaleString();
-  const shortId = orderId ? orderId.slice(0, 8) : "";
-  const itemRows = items.map((l) =>
-    `<div class="r-item-row"><span class="r-item-name">${l.qty}x ${l.name}</span><span>${fmt(l.price * l.qty)}</span></div>`
-  ).join("");
+  try {
+    const dateStr = new Date().toLocaleString();
+    const shortId = orderId ? orderId.slice(0, 8) : "";
+    const safeItems = Array.isArray(items) ? items : [];
+    const itemRows = safeItems.map((l) =>
+      `<div class="r-item-row"><span class="r-item-name">${l.qty}x ${l.name}</span><span>${fmt((l.price || 0) * (l.qty || 0))}</span></div>`
+    ).join("");
 
-  document.getElementById("receipt-print-area").innerHTML = `
-    <div class="r-header">
-      <div class="r-name">${CURRENT_RESTAURANT.name}</div>
-      <div class="r-meta">${tableLabel || "Takeaway"}</div>
-      <div class="r-meta">${dateStr}${shortId ? " · #" + shortId : ""}</div>
-    </div>
-    <div class="r-line"></div>
-    ${itemRows}
-    <div class="r-line"></div>
-    <div class="r-totals">
-      <div class="r-item-row"><span>Subtotal</span><span>${fmt(subtotal)}</span></div>
-      <div class="r-item-row"><span>Tax</span><span>${fmt(tax)}</span></div>
-      <div class="r-item-row r-grand"><span>Total</span><span>${fmt(total)}</span></div>
-      ${paymentMethod ? `<div class="r-item-row"><span>Paid via</span><span style="text-transform:capitalize;">${paymentMethod}</span></div>` : ""}
-    </div>
-    <div class="r-footer">Thank you for dining with us!</div>`;
+    document.getElementById("receipt-print-area").innerHTML = `
+      <div class="r-header">
+        <div class="r-name">${CURRENT_RESTAURANT ? CURRENT_RESTAURANT.name : ""}</div>
+        <div class="r-meta">${tableLabel || "Takeaway"}</div>
+        <div class="r-meta">${dateStr}${shortId ? " · #" + shortId : ""}</div>
+      </div>
+      <div class="r-line"></div>
+      ${itemRows || `<div class="r-item-row"><span>No itemized lines available</span></div>`}
+      <div class="r-line"></div>
+      <div class="r-totals">
+        <div class="r-item-row"><span>Subtotal</span><span>${fmt(subtotal || 0)}</span></div>
+        <div class="r-item-row"><span>Tax</span><span>${fmt(tax || 0)}</span></div>
+        <div class="r-item-row r-grand"><span>Total</span><span>${fmt(total || 0)}</span></div>
+        ${paymentMethod ? `<div class="r-item-row"><span>Paid via</span><span style="text-transform:capitalize;">${paymentMethod}</span></div>` : ""}
+      </div>
+      <div class="r-footer">Thank you for dining with us!</div>`;
 
-  window.print();
+    window.print();
+  } catch (err) {
+    console.error("Print failed:", err);
+    alert("Couldn't build the receipt to print — the order still saved correctly. Tell your developer: " + err.message);
+  }
 }
 
 // Browsers (and mobile webviews) block sound until the page has had a
@@ -365,7 +372,11 @@ async function pollIncomingOrders() {
     const advanceBtn = row.querySelector('[data-action="advance"]');
     if (advanceBtn) {
       advanceBtn.onclick = async () => {
-        await updateOrderStatus(o.id, nextAction, nextAction === "closed" ? "cash" : null);
+        const ok = await updateOrderStatus(o.id, nextAction, nextAction === "closed" ? "cash" : null);
+        if (!ok) {
+          alert("Couldn't update this order — check your connection and try again.");
+          return;
+        }
         if (nextAction === "closed") {
           printReceipt({
             tableLabel: o.table_label,
@@ -573,7 +584,7 @@ document.getElementById("btn-print").addEventListener("click", async () => {
       // and printing later. No payment is taken here.
       toast.textContent = "Sent to kitchen";
     } else {
-      await updateOrderStatus(created.id, "closed", payMethod);
+      const closed = await updateOrderStatus(created.id, "closed", payMethod);
       printReceipt({
         tableLabel,
         orderId: created.id,
@@ -583,7 +594,7 @@ document.getElementById("btn-print").addEventListener("click", async () => {
         total: created.total,
         paymentMethod: payMethod,
       });
-      toast.textContent = "Order saved and closed";
+      toast.textContent = closed ? "Order saved and closed" : "Order saved, but marking it closed failed — check the incoming orders list";
     }
     toast.classList.add("show");
     setTimeout(() => toast.classList.remove("show"), 2200);

@@ -31,7 +31,7 @@
 <div class="app">
   <div class="topbar">
     <div class="brand">
-      <div class="brand-mark">D</div>
+      <div class="brand-mark" id="brand-mark">D</div>
       <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Table QR codes</div></div>
     </div>
     <div class="nav-links no-print">
@@ -70,6 +70,7 @@ async function init() {
     return;
   }
   document.getElementById("r-name").textContent = r.name;
+  applyBrandMark("brand-mark");
 
   const { data: tableRows } = await supa.from("restaurant_tables").select("*").eq("restaurant_id", r.id).order("label");
   tables = tableRows || [];

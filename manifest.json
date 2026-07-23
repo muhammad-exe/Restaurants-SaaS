@@ -4,8 +4,8 @@
   "start_url": "pos.html",
   "scope": ".",
   "display": "standalone",
-  "background_color": "#FAF7F1",
-  "theme_color": "#2F5D50",
+  "background_color": "#FFF6EA",
+  "theme_color": "#E86A20",
   "orientation": "any",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },

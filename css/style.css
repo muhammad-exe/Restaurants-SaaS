@@ -1,6 +1,6 @@
 :root{
-  --ink:#211F1B; --paper:#FAF7F1; --paper-2:#F1ECE2; --line:#E1DACB;
-  --accent:#2F5D50; --accent-soft:#E3ECE6; --accent-dark:#1D3B33;
+  --ink:#3A1F19; --paper:#FFF6EA; --paper-2:#F8D9BC; --line:#EBC49C;
+  --accent:#E86A20; --accent-soft:#FBE2CC; --accent-dark:#83322F;
   --white:#FFFFFF; --danger:#B4482F; --radius:14px;
   --font-display:'Fraunces', serif; --font-body:'Inter', sans-serif; --font-mono:'IBM Plex Mono', monospace;
 }
@@ -10,7 +10,8 @@ body{font-family:var(--font-body); background:var(--paper); color:var(--ink);}
 
 .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; flex-wrap:wrap; gap:14px; padding-bottom:16px; border-bottom:1px solid var(--line);}
 .brand{display:flex; align-items:center; gap:12px;}
-.brand-mark{width:38px; height:38px; border-radius:10px; background:linear-gradient(155deg, var(--accent) 0%, var(--accent-dark) 100%); display:flex; align-items:center; justify-content:center; color:var(--white); font-family:var(--font-display); font-size:19px; font-weight:600; box-shadow:0 2px 6px rgba(47,93,80,0.35);}
+.brand-mark{width:38px; height:38px; border-radius:10px; background:linear-gradient(155deg, var(--accent) 0%, var(--accent-dark) 100%); display:flex; align-items:center; justify-content:center; color:var(--white); font-family:var(--font-display); font-size:19px; font-weight:600; box-shadow:0 2px 6px rgba(232,106,32,0.35); overflow:hidden;}
+.brand-logo-img{width:100%; height:100%; object-fit:cover;}
 .brand-name{font-family:var(--font-display); font-size:20px; font-weight:600;}
 .brand-tag{font-size:12px; color:#8B8474;}
 .nav-links a{font-size:13px; font-weight:600; color:var(--ink); text-decoration:none; margin-left:16px; opacity:0.6;}
@@ -104,8 +105,8 @@ button{font-family:var(--font-body); cursor:pointer;}
 .order-totals{border-top:1px dashed var(--line); padding-top:12px; margin-bottom:14px;}
 .tot-row{display:flex; justify-content:space-between; font-size:12.5px; color:#8B8474; margin-bottom:6px; font-family:var(--font-mono);}
 .tot-row.grand{color:var(--ink); font-weight:700; font-size:16px; font-family:var(--font-body);}
-.btn-primary{background:var(--accent); color:var(--white); border:none; border-radius:10px; padding:13px; font-weight:600; font-size:14px; width:100%; box-shadow:0 2px 8px rgba(47,93,80,0.28); transition:background .15s ease, box-shadow .15s ease, transform .1s ease;}
-.btn-primary:hover:not(:disabled){background:var(--accent-dark); box-shadow:0 3px 12px rgba(47,93,80,0.35);}
+.btn-primary{background:var(--accent); color:var(--white); border:none; border-radius:10px; padding:13px; font-weight:600; font-size:14px; width:100%; box-shadow:0 2px 8px rgba(232,106,32,0.28); transition:background .15s ease, box-shadow .15s ease, transform .1s ease;}
+.btn-primary:hover:not(:disabled){background:var(--accent-dark); box-shadow:0 3px 12px rgba(232,106,32,0.35);}
 .btn-primary:active:not(:disabled){transform:translateY(1px);}
 .btn-primary:disabled{background:var(--line); color:#8B8474; cursor:not-allowed;}
 .pay-select{display:flex; gap:6px; margin-bottom:10px;}
@@ -141,7 +142,8 @@ button{font-family:var(--font-body); cursor:pointer;}
 
 /* ---- Customer menu ---- */
 .menu-shell{max-width:420px; margin:0 auto;}
-.menu-header{background:linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%); color:var(--white); padding:18px 18px; border-radius:14px 14px 0 0; position:relative;}
+.menu-header{background:linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%); color:var(--white); padding:18px 18px; border-radius:14px 14px 0 0; position:relative; text-align:center;}
+.menu-header-logo{width:52px; height:52px; border-radius:50%; object-fit:cover; border:2px solid rgba(255,255,255,0.6); margin-bottom:8px; background:var(--white);}
 .call-waiter-btn{position:absolute; top:14px; right:14px; background:rgba(255,255,255,0.15); color:var(--white); border:none; border-radius:16px; padding:7px 12px; font-size:11px; font-weight:600; cursor:pointer;}
 .call-waiter-btn:hover{background:rgba(255,255,255,0.25);}
 .call-waiter-btn:disabled{opacity:0.5; cursor:default;}

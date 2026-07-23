@@ -4,7 +4,7 @@ This is a real, working app — not a demo. Order data is saved to an actual
 database, and it will keep working after you close the tab. Total cost to
 run this for your first several restaurants: **$0/month.**
 
-> **Already set up a Supabase project?** Twelve migration files may
+> **Already set up a Supabase project?** Thirteen migration files may
 > apply to you, run in your Supabase SQL Editor in this order if you
 > haven't already:
 > 1. `supabase/migration_v2_security.sql` — locks down the database (see below)
@@ -19,9 +19,16 @@ run this for your first several restaurants: **$0/month.**
 > 10. `supabase/migration_v11_password_login.sql` — **replaces 4-digit PINs with real hashed passwords** — your team's old PINs still work as their password after this runs, nobody gets locked out
 > 11. `supabase/migration_v12_availability_and_addon.sql` — adds the "86 an item" toggle and the add-on-order flow
 > 12. `supabase/migration_v13_order_crud_and_fixes.sql` — adds order editing/voiding, and **fixes a real bug** where the customer waiting page only appeared for QR-placed orders, never ones staff entered on the POS
+> 13. `supabase/migration_v14_table_management.sql` — adds the Tables panel on the owner dashboard
 >
 > All are safe to run more than once and don't touch your existing
 > tables or data.
+>
+> **⚠️ Run `migration_v15_chai_jaan_client.sql` LAST, and read its own
+> header comment before running it** — unlike the others, this one adds
+> real client data (not just functions), and you need to change one
+> line in `js/config.js` *after* running it, not before. See the
+> "Onboarding Chai Jaan" section below for the full sequence.
 >
 > **The 2-player football game needs no migration at all** — it doesn't
 > use the database, only Supabase Realtime (already part of your
@@ -385,6 +392,47 @@ site just expects a link back.
 Table Editor (digits only, with country code, no `+` or spaces, e.g.
 `923001234567`). The demo data already has a placeholder number so you
 can see the button working immediately.
+
+## Onboarding Chai Jaan — the exact sequence
+
+This deployment has been switched over to serve a real client, **Chai
+Jaan** — full menu (98 items across 18 categories, matching the menu
+photo), real logo, and a new warm maroon/orange/cream theme replacing
+the old teal one. The demo "Zaiqa Grill House" data is untouched and
+still in your database if you ever want it back for testing — Chai
+Jaan is a second, separate restaurant, not a rename.
+
+**Do these in this exact order, or the site will show "Could not
+connect" partway through:**
+
+1. Run every migration you haven't already, **v2 through v14**, in
+   order (see the list at the top of this file).
+2. Run `supabase/migration_v15_chai_jaan_client.sql` last — this is
+   the one that actually creates the Chai Jaan restaurant, its menu,
+   8 starter tables, and a starter owner/cashier login.
+3. Only *after* step 2 succeeds — deploy this app folder (the
+   `js/config.js` in this zip already has `RESTAURANT_SLUG =
+   "chai-jaan"` set, so once you push, the live site switches to
+   showing Chai Jaan's menu instead of the demo one).
+
+**Starter login — change these immediately, before handing off:**
+- Owner password: `chaijaan123`
+- Cashier password: `cashier123`
+
+Change both from the dashboard's Staff panel (Edit → set a real
+password) as soon as you're logged in — these are meant to get you in
+the door, not to be the client's actual passwords.
+
+**Menu photos are still placeholders**, matching dish names via a free
+stock photo service — same caveat as the demo data. Swap in real
+photos of Chai Jaan's actual dishes via Supabase's Table Editor →
+`menu_items` → `image_url` column, one at a time as you get them.
+
+**The logo** is stored at `branding/chai-jaan-logo.png` in this
+project and referenced by the new `logo_url` column on the
+`restaurants` table — if you ever need to swap it for a higher-res
+version, replace that file and it updates everywhere (POS, dashboard,
+customer menu, QR page) with no other changes needed.
 
 ## Adding your own restaurant instead of the demo one
 
