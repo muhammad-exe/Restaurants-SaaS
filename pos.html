@@ -71,6 +71,11 @@
   </div>
 </div>
 <div class="toast" id="toast">Order saved and closed</div>
+<div class="wa-send-toast" id="wa-send-toast">
+  <span id="wa-send-text">Send this receipt on WhatsApp?</span>
+  <a href="#" id="wa-send-link" target="_blank" rel="noopener">Open WhatsApp</a>
+  <button id="wa-send-dismiss" title="Dismiss">&times;</button>
+</div>
 <div class="call-popup-wrap" id="call-popup-wrap"></div>
 
 <div id="receipt-print-area" class="receipt-print-area"></div>
@@ -628,6 +633,17 @@ document.getElementById("btn-print").addEventListener("click", async () => {
     }
     toast.classList.add("show");
     setTimeout(() => toast.classList.remove("show"), 2200);
+
+    if (orderSource === "whatsapp" && waPhone) {
+      const waLink = buildWhatsAppReceiptLinkTo(waPhone, created, order);
+      const waToast = document.getElementById("wa-send-toast");
+      if (waLink) {
+        document.getElementById("wa-send-text").textContent = `Receipt ready for ${waPhone}`;
+        document.getElementById("wa-send-link").href = waLink;
+        waToast.classList.add("show");
+      }
+    }
+
     order = [];
     orderSource = "pos";
     document.querySelectorAll("#order-source-select button").forEach((b) => b.classList.toggle("active", b.dataset.source === "pos"));
@@ -639,6 +655,13 @@ document.getElementById("btn-print").addEventListener("click", async () => {
 });
 
 init();
+
+document.getElementById("wa-send-dismiss").addEventListener("click", () => {
+  document.getElementById("wa-send-toast").classList.remove("show");
+});
+document.getElementById("wa-send-link").addEventListener("click", () => {
+  document.getElementById("wa-send-toast").classList.remove("show");
+});
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

@@ -693,6 +693,20 @@ end;
 $$;
 grant execute on function remove_table to anon;
 
+-- ---------- Owner-editable restaurant settings (WhatsApp number) ----------
+create or replace function update_restaurant_settings(p_restaurant_id uuid, p_whatsapp_number text)
+returns table (id uuid, whatsapp_number text)
+language plpgsql security definer as $$
+begin
+  return query
+    update restaurants
+    set whatsapp_number = nullif(trim(p_whatsapp_number), '')
+    where restaurants.id = p_restaurant_id
+    returning restaurants.id, restaurants.whatsapp_number;
+end;
+$$;
+grant execute on function update_restaurant_settings to anon;
+
 
 -- ============================================================
 -- Seed data — one demo restaurant so the app works immediately

@@ -89,6 +89,15 @@
       </div>
       <div class="staff-error" id="table-error"></div>
     </div>
+    <div class="panel card" style="margin-top:16px;">
+      <h4>Settings</h4>
+      <p class="muted" style="font-size:12px; margin-bottom:12px;">This number is where the customer menu's "Get my receipt on WhatsApp" button sends receipts. Include the country code, no + or spaces — e.g. 923001234567.</p>
+      <div class="staff-add-form" id="settings-form">
+        <input type="tel" id="settings-whatsapp" placeholder="WhatsApp number, e.g. 923001234567">
+        <button id="btn-save-settings">Save</button>
+      </div>
+      <div class="staff-error" id="settings-error"></div>
+    </div>
   </div>
 </div>
 <div class="call-popup-wrap" id="call-popup-wrap"></div>
@@ -132,6 +141,7 @@ async function attemptLogin() {
     await renderPeriod(1);
     await renderStaffList();
     await renderTablesList();
+    document.getElementById("settings-whatsapp").value = CURRENT_RESTAURANT.whatsapp_number || "";
     setInterval(() => renderPeriod(currentPeriodDays), 20000);
     document.getElementById("bell-btn").style.display = "block";
     updateBellIcon();
@@ -454,6 +464,21 @@ document.getElementById("btn-add-table").addEventListener("click", async () => {
   }
   document.getElementById("table-label").value = "";
   renderTablesList();
+});
+
+document.getElementById("btn-save-settings").addEventListener("click", async () => {
+  const value = document.getElementById("settings-whatsapp").value.trim();
+  const errorEl = document.getElementById("settings-error");
+  errorEl.textContent = "";
+  const result = await updateRestaurantSettings(CURRENT_RESTAURANT.id, value);
+  if (result.error) {
+    errorEl.textContent = result.error;
+    return;
+  }
+  CURRENT_RESTAURANT.whatsapp_number = result.data.whatsapp_number;
+  errorEl.style.color = "var(--accent-dark)";
+  errorEl.textContent = "Saved.";
+  setTimeout(() => { errorEl.textContent = ""; }, 2000);
 });
 
 init();

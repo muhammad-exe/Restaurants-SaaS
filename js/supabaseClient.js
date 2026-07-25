@@ -304,6 +304,15 @@ async function removeTable(tableId) {
   return true;
 }
 
+async function updateRestaurantSettings(restaurantId, whatsappNumber) {
+  const { data, error } = await supa.rpc("update_restaurant_settings", {
+    p_restaurant_id: restaurantId,
+    p_whatsapp_number: whatsappNumber,
+  });
+  if (error || !data || data.length === 0) return { error: error ? error.message : "Could not save" };
+  return { data: data[0] };
+}
+
 // A stable per-device id (not tied to a login) so two phones scanning
 // the same table's QR can be told apart as "player 1" / "player 2" in
 // the waiting-room game, and so a page refresh doesn't lose your seat.
@@ -319,6 +328,17 @@ function getDeviceId() {
 
 function buildWhatsAppReceiptLink(order, cart) {
   if (!CURRENT_RESTAURANT.whatsapp_number) return null;
+  return buildWhatsAppReceiptLinkTo(CURRENT_RESTAURANT.whatsapp_number, order, cart);
+}
+
+// Same idea, but addressed to an arbitrary number — used by the POS to
+// let staff send a receipt straight to the CUSTOMER's own WhatsApp
+// after entering a WhatsApp order, instead of only being able to open
+// a chat back to the restaurant's own number. Still requires a person
+// to tap Send in WhatsApp — true automatic sending with no tap needs
+// the Meta WhatsApp Business Cloud API (see note above).
+function buildWhatsAppReceiptLinkTo(phoneNumber, order, cart) {
+  if (!phoneNumber) return null;
   const lines = cart.map((l) => `${l.qty}x ${l.name} - ${CURRENT_RESTAURANT.currency} ${Math.round(l.price * l.qty)}`);
   const text = [
     `Order receipt - ${CURRENT_RESTAURANT.name}`,
@@ -327,6 +347,6 @@ function buildWhatsAppReceiptLink(order, cart) {
     "",
     `Total: ${CURRENT_RESTAURANT.currency} ${Math.round(order.total)}`,
   ].join("\n");
-  const digits = CURRENT_RESTAURANT.whatsapp_number.replace(/[^0-9]/g, "");
+  const digits = phoneNumber.replace(/[^0-9]/g, "");
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
