@@ -343,7 +343,7 @@ async function renderPeriod(days) {
   const recentWrap = document.getElementById("recent-orders");
   recentWrap.innerHTML = recent.length
     ? recent.map((o) => `<div class="top-item-row">
-        <span class="ti-name">${new Date(o.created_at).toLocaleString()} · ${o.source === "qr" ? "QR order" : "POS"}</span>
+        <span class="ti-name">${new Date(o.created_at).toLocaleString()} · ${o.source === "qr" ? "QR order" : o.source === "whatsapp" ? "WhatsApp" : "POS"}</span>
         <span class="ti-val">${fmt(o.total)}</span>
       </div>`).join("")
     : `<div class="muted" style="font-size:13px;">No orders yet — take one on the POS or place one from the customer menu to see it here.</div>`;

@@ -54,6 +54,11 @@
         <button id="btn-cancel-edit">Cancel</button>
       </div>
       <select class="table-select" id="table-select"></select>
+      <div class="pay-select" id="order-source-select">
+        <button class="active" data-source="pos">In-person</button>
+        <button data-source="whatsapp">WhatsApp</button>
+      </div>
+      <input type="tel" class="table-select" id="wa-phone-input" placeholder="Customer WhatsApp number (optional)" style="display:none;">
       <div class="order-lines" id="order-lines"></div>
       <div class="order-totals" id="order-totals"></div>
       <div class="pay-select" id="pay-select">
@@ -78,6 +83,7 @@ let menu = [];
 let posCat = 0;
 let order = [];
 let payMethod = "cash";
+let orderSource = "pos";
 let tables = [];
 let loggedInStaff = null;
 let editingOrderId = null; // set when the cart panel is editing an existing order instead of building a new one
@@ -98,7 +104,7 @@ async function init() {
   const { data: tableRows } = await supa.from("restaurant_tables").select("*").eq("restaurant_id", r.id);
   tables = tableRows || [];
   const sel = document.getElementById("table-select");
-  sel.innerHTML = tables.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+  sel.innerHTML = `<option value="">Takeaway</option>` + tables.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
 
   document.getElementById("loading").style.display = "none";
   document.getElementById("pin-gate").style.display = "block";
@@ -169,7 +175,16 @@ function printReceipt({ tableLabel, orderId, items, subtotal, tax, total, paymen
       </div>
       <div class="r-footer">Thank you for dining with us!</div>`;
 
-    window.print();
+    // Inside the desktop app, use the silent print bridge (preload.js)
+    // so it goes straight to the receipt printer with no dialog — that
+    // dialog is what was showing "This app doesn't support print
+    // preview" on Windows. In a normal browser tab (no desktop bridge),
+    // window.print() still works exactly as before.
+    if (window.dastarkhwanDesktop && window.dastarkhwanDesktop.printReceipt) {
+      window.dastarkhwanDesktop.printReceipt();
+    } else {
+      window.print();
+    }
   } catch (err) {
     console.error("Print failed:", err);
     alert("Couldn't build the receipt to print — the order still saved correctly. Tell your developer: " + err.message);
@@ -344,7 +359,7 @@ async function pollIncomingOrders() {
     const row = document.createElement("div");
     row.className = "order-line";
     row.style.marginBottom = "8px";
-    const sourceLabel = o.source === "qr" ? "QR order" : "POS";
+    const sourceLabel = o.source === "qr" ? "QR order" : o.source === "whatsapp" ? "WhatsApp" : "POS";
     const nextAction = o.status === "open" ? "preparing" : o.status === "preparing" ? "ready" : "closed";
     const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & print receipt";
     const waiterBlocked = isWaiterMode && nextAction === "closed";
@@ -529,6 +544,8 @@ function startEditOrder(o) {
   document.getElementById("edit-banner").style.display = "flex";
   document.getElementById("table-select").style.display = "none";
   document.getElementById("pay-select").style.display = "none";
+  document.getElementById("order-source-select").style.display = "none";
+  document.getElementById("wa-phone-input").style.display = "none";
   renderOrder();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -540,6 +557,8 @@ function cancelEditOrder() {
   document.getElementById("edit-banner").style.display = "none";
   document.getElementById("table-select").style.display = "";
   document.getElementById("pay-select").style.display = isWaiterMode ? "none" : "flex";
+  document.getElementById("order-source-select").style.display = "flex";
+  document.getElementById("wa-phone-input").style.display = orderSource === "whatsapp" ? "block" : "none";
   renderOrder();
 }
 document.getElementById("btn-cancel-edit").addEventListener("click", cancelEditOrder);
@@ -549,6 +568,14 @@ document.getElementById("pay-select").addEventListener("click", (e) => {
   document.querySelectorAll("#pay-select button").forEach((b) => b.classList.remove("active"));
   e.target.classList.add("active");
   payMethod = e.target.dataset.method;
+});
+
+document.getElementById("order-source-select").addEventListener("click", (e) => {
+  if (e.target.tagName !== "BUTTON") return;
+  document.querySelectorAll("#order-source-select button").forEach((b) => b.classList.remove("active"));
+  e.target.classList.add("active");
+  orderSource = e.target.dataset.source;
+  document.getElementById("wa-phone-input").style.display = orderSource === "whatsapp" ? "block" : "none";
 });
 
 document.getElementById("btn-print").addEventListener("click", async () => {
@@ -569,11 +596,14 @@ document.getElementById("btn-print").addEventListener("click", async () => {
 
   const tableId = document.getElementById("table-select").value;
   const tableLabel = (tables.find((t) => t.id === tableId) || {}).label;
+  const waPhone = document.getElementById("wa-phone-input").value.trim();
   const created = await createOrder({
     restaurantId: CURRENT_RESTAURANT.id,
     tableId,
-    source: "pos",
+    source: orderSource,
+    orderType: tableId ? "dine-in" : "takeaway",
     cart: order,
+    customerPhone: orderSource === "whatsapp" && waPhone ? waPhone : null,
     staffId: loggedInStaff ? loggedInStaff.id : null,
   });
   if (created) {
@@ -599,6 +629,10 @@ document.getElementById("btn-print").addEventListener("click", async () => {
     toast.classList.add("show");
     setTimeout(() => toast.classList.remove("show"), 2200);
     order = [];
+    orderSource = "pos";
+    document.querySelectorAll("#order-source-select button").forEach((b) => b.classList.toggle("active", b.dataset.source === "pos"));
+    document.getElementById("wa-phone-input").value = "";
+    document.getElementById("wa-phone-input").style.display = "none";
     renderOrder();
     pollIncomingOrders();
   }

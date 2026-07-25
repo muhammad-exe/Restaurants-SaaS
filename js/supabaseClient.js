@@ -98,7 +98,7 @@ async function setItemAvailability(itemId, isAvailable) {
 // Creates an order + its line items via the create_order() database
 // function — the client never inserts into orders/order_items/customers
 // directly, so a stolen anon key can't forge arbitrary rows.
-async function createOrder({ restaurantId, tableId, source, cart, customerPhone, staffId, marketingOptIn }) {
+async function createOrder({ restaurantId, tableId, source, cart, customerPhone, staffId, marketingOptIn, orderType }) {
   const items = cart.map((l) => ({
     menu_item_id: l.id,
     name: l.name,
@@ -113,6 +113,7 @@ async function createOrder({ restaurantId, tableId, source, cart, customerPhone,
     p_customer_phone: customerPhone || null,
     p_staff_id: staffId || null,
     p_marketing_opt_in: marketingOptIn !== undefined ? marketingOptIn : true,
+    p_order_type: orderType || null,
   });
   if (error) {
     console.error(error);
