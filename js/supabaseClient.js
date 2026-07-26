@@ -98,7 +98,7 @@ async function setItemAvailability(itemId, isAvailable) {
 // Creates an order + its line items via the create_order() database
 // function — the client never inserts into orders/order_items/customers
 // directly, so a stolen anon key can't forge arbitrary rows.
-async function createOrder({ restaurantId, tableId, source, cart, customerPhone, staffId, marketingOptIn, orderType }) {
+async function createOrder({ restaurantId, tableId, source, cart, customerPhone, staffId, marketingOptIn }) {
   const items = cart.map((l) => ({
     menu_item_id: l.id,
     name: l.name,
@@ -113,7 +113,6 @@ async function createOrder({ restaurantId, tableId, source, cart, customerPhone,
     p_customer_phone: customerPhone || null,
     p_staff_id: staffId || null,
     p_marketing_opt_in: marketingOptIn !== undefined ? marketingOptIn : true,
-    p_order_type: orderType || null,
   });
   if (error) {
     console.error(error);
@@ -214,26 +213,47 @@ async function listStaff(restaurantId) {
   return data;
 }
 
-async function addStaff(restaurantId, name, password, role) {
+async function addStaff(restaurantId, name, password, role, callerRole) {
   const { data, error } = await supa.rpc("add_staff", {
     p_restaurant_id: restaurantId,
     p_name: name,
     p_password: password,
     p_role: role,
+    p_caller_role: callerRole || "owner",
   });
   if (error) return { error: error.message };
   return { data: data[0] };
 }
 
-async function updateStaff(staffId, name, password, role) {
+async function updateStaff(staffId, name, password, role, callerRole) {
   const { data, error } = await supa.rpc("update_staff", {
     p_staff_id: staffId,
     p_name: name,
     p_password: password,
     p_role: role,
+    p_caller_role: callerRole || "owner",
   });
   if (error) return { error: error.message };
   return { data: data[0] };
+}
+
+// One rating + comment per order, submitted from the customer's
+// waiting screen once their order is complete. Upserts, so
+// re-submitting just updates the same row instead of erroring.
+async function submitFeedback(orderId, rating, comment) {
+  const { data, error } = await supa.rpc("submit_feedback", {
+    p_order_id: orderId,
+    p_rating: rating,
+    p_comment: comment || null,
+  });
+  if (error || !data || data.length === 0) { console.error(error); return null; }
+  return data[0];
+}
+
+async function getOrderFeedback(orderId) {
+  const { data, error } = await supa.rpc("get_order_feedback", { p_order_id: orderId });
+  if (error || !data || data.length === 0) return null;
+  return data[0];
 }
 
 async function removeStaff(staffId) {
@@ -304,18 +324,8 @@ async function removeTable(tableId) {
   return true;
 }
 
-async function updateRestaurantSettings(restaurantId, whatsappNumber) {
-  const { data, error } = await supa.rpc("update_restaurant_settings", {
-    p_restaurant_id: restaurantId,
-    p_whatsapp_number: whatsappNumber,
-  });
-  if (error || !data || data.length === 0) return { error: error ? error.message : "Could not save" };
-  return { data: data[0] };
-}
-
-// A stable per-device id (not tied to a login) so two phones scanning
-// the same table's QR can be told apart as "player 1" / "player 2" in
-// the waiting-room game, and so a page refresh doesn't lose your seat.
+// A stable per-device id (not tied to a login) so a page refresh
+// doesn't lose your seat on the order tracker / waiting screen.
 function getDeviceId() {
   const key = "dastarkhwan_device_id";
   let id = localStorage.getItem(key);
@@ -328,17 +338,6 @@ function getDeviceId() {
 
 function buildWhatsAppReceiptLink(order, cart) {
   if (!CURRENT_RESTAURANT.whatsapp_number) return null;
-  return buildWhatsAppReceiptLinkTo(CURRENT_RESTAURANT.whatsapp_number, order, cart);
-}
-
-// Same idea, but addressed to an arbitrary number — used by the POS to
-// let staff send a receipt straight to the CUSTOMER's own WhatsApp
-// after entering a WhatsApp order, instead of only being able to open
-// a chat back to the restaurant's own number. Still requires a person
-// to tap Send in WhatsApp — true automatic sending with no tap needs
-// the Meta WhatsApp Business Cloud API (see note above).
-function buildWhatsAppReceiptLinkTo(phoneNumber, order, cart) {
-  if (!phoneNumber) return null;
   const lines = cart.map((l) => `${l.qty}x ${l.name} - ${CURRENT_RESTAURANT.currency} ${Math.round(l.price * l.qty)}`);
   const text = [
     `Order receipt - ${CURRENT_RESTAURANT.name}`,
@@ -347,6 +346,32 @@ function buildWhatsAppReceiptLinkTo(phoneNumber, order, cart) {
     "",
     `Total: ${CURRENT_RESTAURANT.currency} ${Math.round(order.total)}`,
   ].join("\n");
-  const digits = phoneNumber.replace(/[^0-9]/g, "");
+  const digits = CURRENT_RESTAURANT.whatsapp_number.replace(/[^0-9]/g, "");
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
+
+// The counterpart to buildWhatsAppReceiptLink, addressed the OTHER
+// way: to the CUSTOMER's number instead of the restaurant's. This is
+// meant to be opened on a restaurant-owned device (the cashier's POS
+// tablet/phone, with WhatsApp Business signed in as the restaurant) —
+// tapping it opens a chat to the customer with the receipt pre-filled,
+// so from the customer's side the message genuinely arrives from the
+// restaurant's WhatsApp number. Same free, tap-to-send mechanism as
+// buildWhatsAppReceiptLink, just pointed at the other party. Fully
+// silent/automatic sending (no tap at all) needs Meta's WhatsApp
+// Business Cloud API — see the note on buildWhatsAppReceiptLink.
+function buildWhatsAppReceiptLinkToCustomer(customerPhone, order, items) {
+  if (!customerPhone) return null;
+  const lines = (items || []).map((l) => `${l.qty}x ${l.name} - ${CURRENT_RESTAURANT.currency} ${Math.round((l.price || 0) * (l.qty || 0))}`);
+  const text = [
+    `Order receipt - ${CURRENT_RESTAURANT.name}`,
+    "",
+    ...lines,
+    "",
+    `Total: ${CURRENT_RESTAURANT.currency} ${Math.round(order.total || 0)}`,
+    "",
+    "Thank you for dining with us!",
+  ].join("\n");
+  const digits = customerPhone.replace(/[^0-9]/g, "");
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }

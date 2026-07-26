@@ -12,7 +12,7 @@
   <div class="topbar">
     <div class="brand">
       <div class="brand-mark" id="brand-mark">D</div>
-      <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Owner dashboard</div></div>
+      <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag" id="dash-tag">Owner dashboard</div></div>
     </div>
     <div class="nav-links">
       <a href="pos.html">Cashier POS</a>
@@ -70,16 +70,17 @@
         <input type="password" id="staff-pin" placeholder="Password (min 6 characters)" autocomplete="off">
         <select id="staff-role">
           <option value="cashier">Cashier</option>
-          <option value="waiter">Waiter</option>
+          <option value="headwaiter">Headwaiter</option>
+          <option value="kitchen">Kitchen</option>
           <option value="manager">Manager</option>
-          <option value="owner">Owner</option>
+          <option value="owner" id="staff-role-owner-option">Owner</option>
         </select>
         <button id="btn-add-staff">Add staff</button>
       </div>
       <div class="staff-error" id="staff-error"></div>
     </div>
 
-    <div class="panel card" style="margin-top:16px;">
+    <div class="panel card" style="margin-top:16px;" id="tables-panel">
       <h4>Tables</h4>
       <p class="muted" style="font-size:12px; margin-bottom:12px;">Add a table and it gets its own unique QR code automatically — print it from the <a href="qr-codes.html">Table QR codes</a> page.</p>
       <div id="tables-list"></div>
@@ -89,14 +90,12 @@
       </div>
       <div class="staff-error" id="table-error"></div>
     </div>
+
     <div class="panel card" style="margin-top:16px;">
-      <h4>Settings</h4>
-      <p class="muted" style="font-size:12px; margin-bottom:12px;">This number is where the customer menu's "Get my receipt on WhatsApp" button sends receipts. Include the country code, no + or spaces — e.g. 923001234567.</p>
-      <div class="staff-add-form" id="settings-form">
-        <input type="tel" id="settings-whatsapp" placeholder="WhatsApp number, e.g. 923001234567">
-        <button id="btn-save-settings">Save</button>
-      </div>
-      <div class="staff-error" id="settings-error"></div>
+      <h4 style="display:flex; justify-content:space-between; align-items:center;">
+        Live orders — every table, every stage <span class="muted" style="font-weight:400; font-size:11px;">updates every 6s</span>
+      </h4>
+      <div id="live-orders"></div>
     </div>
   </div>
 </div>
@@ -107,6 +106,7 @@
 <script src="js/supabaseClient.js"></script>
 <script>
 const fmt = (n) => `${CURRENT_RESTAURANT.currency} ${Math.round(n).toLocaleString()}`;
+let loggedInDashStaff = null;
 
 async function init() {
   const r = await loadRestaurant();
@@ -132,17 +132,27 @@ async function attemptLogin() {
 
   const staff = await checkStaffPassword(CURRENT_RESTAURANT.id, password, ["owner", "manager"]);
   if (staff) {
+    loggedInDashStaff = staff;
     document.getElementById("pin-gate").style.display = "none";
     document.getElementById("dash-root").style.display = "block";
+    document.getElementById("dash-tag").textContent = staff.role === "manager" ? "Manager dashboard" : "Owner dashboard";
     const badge = document.getElementById("staff-badge");
     badge.style.display = "flex";
     badge.innerHTML = `Signed in as <strong>${staff.name}</strong> <button id="btn-logout">Sign out</button>`;
     document.getElementById("btn-logout").onclick = () => window.location.reload();
+
+    // Table management now belongs entirely to the manager — the owner
+    // dashboard no longer shows it. A manager also can't create or
+    // promote anyone to "owner" from the Staff panel.
+    document.getElementById("tables-panel").style.display = staff.role === "manager" ? "block" : "none";
+    document.getElementById("staff-role-owner-option").style.display = staff.role === "manager" ? "none" : "";
+
     await renderPeriod(1);
     await renderStaffList();
-    await renderTablesList();
-    document.getElementById("settings-whatsapp").value = CURRENT_RESTAURANT.whatsapp_number || "";
+    if (staff.role === "manager") await renderTablesList();
+    await renderLiveOrders();
     setInterval(() => renderPeriod(currentPeriodDays), 20000);
+    setInterval(renderLiveOrders, 6000);
     document.getElementById("bell-btn").style.display = "block";
     updateBellIcon();
     pollTableCalls();
@@ -352,11 +362,35 @@ async function renderPeriod(days) {
 
   const recentWrap = document.getElementById("recent-orders");
   recentWrap.innerHTML = recent.length
-    ? recent.map((o) => `<div class="top-item-row">
-        <span class="ti-name">${new Date(o.created_at).toLocaleString()} · ${o.source === "qr" ? "QR order" : o.source === "whatsapp" ? "WhatsApp" : "POS"}</span>
-        <span class="ti-val">${fmt(o.total)}</span>
-      </div>`).join("")
+    ? recent.map((o) => {
+        const stars = o.rating ? "&#9733;".repeat(o.rating) + "&#9734;".repeat(5 - o.rating) : null;
+        return `<div class="top-item-row" style="flex-wrap:wrap; align-items:flex-start;">
+          <span class="ti-name">${new Date(o.created_at).toLocaleString()} · ${o.source === "qr" ? "QR order" : "POS"}${o.table_label ? " · " + o.table_label : ""}</span>
+          <span class="ti-val">${fmt(o.total)}</span>
+          ${stars ? `<div style="flex-basis:100%; font-size:12px; color:var(--accent, #E86A20); margin-top:4px;">${stars}${o.comment ? ` <span class="muted" style="color:inherit; opacity:0.8;">— "${o.comment}"</span>` : ""}</div>` : ""}
+        </div>`;
+      }).join("")
     : `<div class="muted" style="font-size:13px;">No orders yet — take one on the POS or place one from the customer menu to see it here.</div>`;
+}
+
+// The manager/owner "eye on everything" panel — every order currently
+// in the pipeline, at whatever stage it's at (kitchen, ready for the
+// cashier, etc.), all in one place.
+async function renderLiveOrders() {
+  const orders = await getOpenOrders(CURRENT_RESTAURANT.id);
+  const wrap = document.getElementById("live-orders");
+  if (!orders.length) {
+    wrap.innerHTML = `<div class="muted" style="font-size:13px;">Nothing in progress right now.</div>`;
+    return;
+  }
+  wrap.innerHTML = orders.map((o) => {
+    const itemsText = (o.items || []).map((i) => `${i.qty}x ${i.name}`).join(", ");
+    return `<div class="top-item-row" style="align-items:flex-start;">
+      <span class="ti-name">${o.table_label || "Takeaway"} · ${o.source === "qr" ? "QR order" : "POS"} · <span style="text-transform:capitalize;">${o.status}</span><br>
+        <span class="muted" style="font-size:11.5px;">${itemsText}</span></span>
+      <span class="ti-val">${fmt(o.total)}</span>
+    </div>`;
+  }).join("");
 }
 
 async function renderStaffList() {
@@ -392,9 +426,10 @@ function startEditStaff(id, currentName, currentRole) {
     <input type="password" class="edit-pin" placeholder="New password (min 6 chars)" autocomplete="off" style="width:170px; padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px; font-family:var(--font-mono);">
     <select class="edit-role" style="padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12.5px; margin-right:6px;">
       <option value="cashier" ${currentRole === "cashier" ? "selected" : ""}>Cashier</option>
-      <option value="waiter" ${currentRole === "waiter" ? "selected" : ""}>Waiter</option>
+      <option value="headwaiter" ${currentRole === "headwaiter" ? "selected" : ""}>Headwaiter</option>
+      <option value="kitchen" ${currentRole === "kitchen" ? "selected" : ""}>Kitchen</option>
       <option value="manager" ${currentRole === "manager" ? "selected" : ""}>Manager</option>
-      <option value="owner" ${currentRole === "owner" ? "selected" : ""}>Owner</option>
+      ${(!loggedInDashStaff || loggedInDashStaff.role !== "manager") ? `<option value="owner" ${currentRole === "owner" ? "selected" : ""}>Owner</option>` : ""}
     </select>
     <button class="btn-mini" data-save="${id}">Save</button>
     <button class="btn-mini" data-cancel="1">Cancel</button>`;
@@ -406,7 +441,7 @@ function startEditStaff(id, currentName, currentRole) {
     const role = row.querySelector(".edit-role").value;
     if (!name) { alert("Name can't be empty."); return; }
     if (pin.length < 6) { alert("Password must be at least 6 characters — enter a password to save (re-enter their current one if unchanged)."); return; }
-    const result = await updateStaff(id, name, pin, role);
+    const result = await updateStaff(id, name, pin, role, loggedInDashStaff ? loggedInDashStaff.role : "owner");
     if (result.error) { alert(result.error); return; }
     renderStaffList();
   };
@@ -422,7 +457,7 @@ document.getElementById("btn-add-staff").addEventListener("click", async () => {
   if (!name) { errorEl.textContent = "Enter a name."; return; }
   if (pin.length < 6) { errorEl.textContent = "Password must be at least 6 characters."; return; }
 
-  const result = await addStaff(CURRENT_RESTAURANT.id, name, pin, role);
+  const result = await addStaff(CURRENT_RESTAURANT.id, name, pin, role, loggedInDashStaff ? loggedInDashStaff.role : "owner");
   if (result.error) {
     errorEl.textContent = result.error;
     return;
@@ -464,21 +499,6 @@ document.getElementById("btn-add-table").addEventListener("click", async () => {
   }
   document.getElementById("table-label").value = "";
   renderTablesList();
-});
-
-document.getElementById("btn-save-settings").addEventListener("click", async () => {
-  const value = document.getElementById("settings-whatsapp").value.trim();
-  const errorEl = document.getElementById("settings-error");
-  errorEl.textContent = "";
-  const result = await updateRestaurantSettings(CURRENT_RESTAURANT.id, value);
-  if (result.error) {
-    errorEl.textContent = result.error;
-    return;
-  }
-  CURRENT_RESTAURANT.whatsapp_number = result.data.whatsapp_number;
-  errorEl.style.color = "var(--accent-dark)";
-  errorEl.textContent = "Saved.";
-  setTimeout(() => { errorEl.textContent = ""; }, 2000);
 });
 
 init();

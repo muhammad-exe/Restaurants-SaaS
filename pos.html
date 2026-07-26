@@ -38,27 +38,24 @@
         <h4 style="color:var(--danger);">&#128276; Tables calling for service</h4>
         <div id="table-calls"></div>
       </div>
-      <div class="pos-cats" id="pos-cats"></div>
-      <div class="pos-grid" id="pos-grid"></div>
+      <div id="menu-picker">
+        <div class="pos-cats" id="pos-cats"></div>
+        <div class="pos-grid" id="pos-grid"></div>
+      </div>
       <div class="panel card" style="margin-top:16px;">
         <h4 style="display:flex; justify-content:space-between; align-items:center;">
-          Incoming orders <span class="muted" style="font-weight:400; font-size:11px;">updates every 6s</span>
+          <span id="queue-heading">Orders</span> <span class="muted" style="font-weight:400; font-size:11px;">updates every 6s</span>
         </h4>
         <div id="incoming-orders"></div>
       </div>
     </div>
-    <div class="pos-order">
+    <div class="pos-order" id="pos-order-panel">
       <h3 id="order-panel-heading">New order</h3>
       <div class="edit-banner" id="edit-banner" style="display:none;">
         Editing an existing order — changes replace its current items.
         <button id="btn-cancel-edit">Cancel</button>
       </div>
       <select class="table-select" id="table-select"></select>
-      <div class="pay-select" id="order-source-select">
-        <button class="active" data-source="pos">In-person</button>
-        <button data-source="whatsapp">WhatsApp</button>
-      </div>
-      <input type="tel" class="table-select" id="wa-phone-input" placeholder="Customer WhatsApp number (optional)" style="display:none;">
       <div class="order-lines" id="order-lines"></div>
       <div class="order-totals" id="order-totals"></div>
       <div class="pay-select" id="pay-select">
@@ -71,11 +68,6 @@
   </div>
 </div>
 <div class="toast" id="toast">Order saved and closed</div>
-<div class="wa-send-toast" id="wa-send-toast">
-  <span id="wa-send-text">Send this receipt on WhatsApp?</span>
-  <a href="#" id="wa-send-link" target="_blank" rel="noopener">Open WhatsApp</a>
-  <button id="wa-send-dismiss" title="Dismiss">&times;</button>
-</div>
 <div class="call-popup-wrap" id="call-popup-wrap"></div>
 
 <div id="receipt-print-area" class="receipt-print-area"></div>
@@ -88,7 +80,6 @@ let menu = [];
 let posCat = 0;
 let order = [];
 let payMethod = "cash";
-let orderSource = "pos";
 let tables = [];
 let loggedInStaff = null;
 let editingOrderId = null; // set when the cart panel is editing an existing order instead of building a new one
@@ -109,7 +100,7 @@ async function init() {
   const { data: tableRows } = await supa.from("restaurant_tables").select("*").eq("restaurant_id", r.id);
   tables = tableRows || [];
   const sel = document.getElementById("table-select");
-  sel.innerHTML = `<option value="">Takeaway</option>` + tables.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+  sel.innerHTML = tables.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
 
   document.getElementById("loading").style.display = "none";
   document.getElementById("pin-gate").style.display = "block";
@@ -123,7 +114,7 @@ async function attemptLogin() {
   document.getElementById("pin-error").textContent = "";
   if (!password) return;
 
-  const staff = await checkStaffPassword(CURRENT_RESTAURANT.id, password, ["owner", "manager", "cashier", "waiter"]);
+  const staff = await checkStaffPassword(CURRENT_RESTAURANT.id, password, ["owner", "manager", "cashier", "headwaiter", "kitchen"]);
   if (staff) {
     loggedInStaff = staff;
     document.getElementById("pin-gate").style.display = "none";
@@ -138,10 +129,13 @@ async function attemptLogin() {
     renderOrder();
     pollIncomingOrders();
     setInterval(pollIncomingOrders, 6000);
-    document.getElementById("bell-btn").style.display = "block";
-    updateBellIcon();
-    pollTableCalls();
-    setInterval(pollTableCalls, 5000);
+    // Only the headwaiter (and manager/owner, for oversight) receive
+    // "call waiter" alerts — cashier and kitchen don't ring for this.
+    if (isHeadwaiter || isManagerOwner) {
+      updateBellIcon();
+      pollTableCalls();
+      setInterval(pollTableCalls, 5000);
+    }
   } else {
     document.getElementById("pin-error").textContent = "Incorrect password — ask your manager if you don't have one yet.";
     input.value = "";
@@ -180,16 +174,7 @@ function printReceipt({ tableLabel, orderId, items, subtotal, tax, total, paymen
       </div>
       <div class="r-footer">Thank you for dining with us!</div>`;
 
-    // Inside the desktop app, use the silent print bridge (preload.js)
-    // so it goes straight to the receipt printer with no dialog — that
-    // dialog is what was showing "This app doesn't support print
-    // preview" on Windows. In a normal browser tab (no desktop bridge),
-    // window.print() still works exactly as before.
-    if (window.dastarkhwanDesktop && window.dastarkhwanDesktop.printReceipt) {
-      window.dastarkhwanDesktop.printReceipt();
-    } else {
-      window.print();
-    }
+    window.print();
   } catch (err) {
     console.error("Print failed:", err);
     alert("Couldn't build the receipt to print — the order still saved correctly. Tell your developer: " + err.message);
@@ -352,10 +337,20 @@ async function pollTableCalls() {
 }
 
 async function pollIncomingOrders() {
-  const orders = await getOpenOrders(CURRENT_RESTAURANT.id);
+  let orders = await getOpenOrders(CURRENT_RESTAURANT.id);
+
+  // Each role only ever sees the slice of the pipeline that's theirs:
+  //  - cashier: nothing shows up until the kitchen has marked it "ready" —
+  //    no incoming/preparing orders clutter their screen, per design.
+  //  - kitchen: only what still needs cooking (open/preparing) — once it's
+  //    ready for the cashier, it drops off their queue.
+  //  - headwaiter/manager/owner: the full picture, for oversight/editing.
+  if (isCashier) orders = orders.filter((o) => o.status === "ready");
+  else if (isKitchen) orders = orders.filter((o) => o.status === "open" || o.status === "preparing");
+
   const wrap = document.getElementById("incoming-orders");
   if (!orders.length) {
-    wrap.innerHTML = `<div class="muted" style="font-size:12.5px;">No open orders right now.</div>`;
+    wrap.innerHTML = `<div class="muted" style="font-size:12.5px;">${isCashier ? "Nothing ready to print yet." : "No open orders right now."}</div>`;
     return;
   }
   wrap.innerHTML = "";
@@ -364,19 +359,44 @@ async function pollIncomingOrders() {
     const row = document.createElement("div");
     row.className = "order-line";
     row.style.marginBottom = "8px";
-    const sourceLabel = o.source === "qr" ? "QR order" : o.source === "whatsapp" ? "WhatsApp" : "POS";
-    const nextAction = o.status === "open" ? "preparing" : o.status === "preparing" ? "ready" : "closed";
-    const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & print receipt";
-    const waiterBlocked = isWaiterMode && nextAction === "closed";
-    const nextActionHtml = waiterBlocked
-      ? `<span class="muted" style="font-size:11px;">Ask cashier to close</span>`
-      : `<button class="btn-mini" data-action="advance" data-next="${nextAction}">${nextLabel}</button>`;
-    // Editing items is open to any signed-in role (fixing a mistake
-    // shouldn't need a manager). Voiding an order is restricted the
-    // same way closing/payment is — a waiter can't cancel an order
-    // outright, only cashier/manager/owner can.
-    const editHtml = `<button class="btn-mini" data-action="edit">Edit</button>`;
-    const voidHtml = isWaiterMode ? "" : `<button class="btn-mini btn-void" data-action="void">Void</button>`;
+    row.style.flexWrap = "wrap";
+    const sourceLabel = o.source === "qr" ? "QR order" : "POS";
+
+    // ---- Kitchen: advance open -> preparing -> ready ----
+    let kitchenActionHtml = "";
+    if (isKitchen) {
+      const nextAction = o.status === "open" ? "preparing" : "ready";
+      const nextLabel = o.status === "open" ? "Start preparing" : "Mark ready";
+      kitchenActionHtml = `<button class="btn-mini" data-action="advance" data-next="${nextAction}">${nextLabel}</button>`;
+    }
+
+    // ---- Manager/owner: full control, including closing straight from here ----
+    let managerActionHtml = "";
+    if (isManagerOwner) {
+      const nextAction = o.status === "open" ? "preparing" : o.status === "preparing" ? "ready" : "closed";
+      const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & print";
+      managerActionHtml = `<button class="btn-mini" data-action="advance" data-next="${nextAction}">${nextLabel}</button>`;
+    }
+
+    // ---- Cashier: pick a payment method, print, close, and (if the
+    // customer gave a phone number) send the receipt to their WhatsApp
+    // from this device. ----
+    let cashierHtml = "";
+    if (isCashier) {
+      cashierHtml = `
+        <select class="cashier-pay-select" data-pay="${o.id}" style="padding:6px; border-radius:6px; border:1px solid var(--line); font-size:12px;">
+          <option value="cash">Cash</option>
+          <option value="card">Card</option>
+          <option value="wallet">Wallet</option>
+        </select>
+        <button class="btn-mini btn-primary" data-action="close-print">Print &amp; close</button>`;
+    }
+
+    // Only headwaiter/kitchen/manager/owner can edit — never cashier.
+    const editHtml = !isCashier ? `<button class="btn-mini" data-action="edit">Edit</button>` : "";
+    // Voiding stays with whoever can also take payment/oversee — cashier
+    // and manager/owner — not headwaiter or kitchen.
+    const voidHtml = (isCashier || isManagerOwner) ? `<button class="btn-mini btn-void" data-action="void">Void</button>` : "";
 
     row.innerHTML = `<div>
         <div class="l-name">${o.table_label || "Takeaway"} · ${sourceLabel} · <span style="text-transform:capitalize;">${o.status}</span></div>
@@ -386,12 +406,15 @@ async function pollIncomingOrders() {
         <span class="mono" style="font-size:12px;">${fmt(o.total)}</span>
         ${editHtml}
         ${voidHtml}
-        ${nextActionHtml}
+        ${kitchenActionHtml}
+        ${managerActionHtml}
+        ${cashierHtml}
       </div>`;
 
     const advanceBtn = row.querySelector('[data-action="advance"]');
     if (advanceBtn) {
       advanceBtn.onclick = async () => {
+        const nextAction = advanceBtn.dataset.next;
         const ok = await updateOrderStatus(o.id, nextAction, nextAction === "closed" ? "cash" : null);
         if (!ok) {
           alert("Couldn't update this order — check your connection and try again.");
@@ -407,12 +430,40 @@ async function pollIncomingOrders() {
             total: o.total,
             paymentMethod: "cash",
           });
+          sendReceiptToCustomerWhatsApp(o);
         }
         pollIncomingOrders();
       };
     }
 
-    row.querySelector('[data-action="edit"]').onclick = () => startEditOrder(o);
+    const closePrintBtn = row.querySelector('[data-action="close-print"]');
+    if (closePrintBtn) {
+      closePrintBtn.onclick = async () => {
+        const payMethodSelect = row.querySelector(`[data-pay="${o.id}"]`);
+        const method = payMethodSelect ? payMethodSelect.value : "cash";
+        closePrintBtn.disabled = true;
+        const ok = await updateOrderStatus(o.id, "closed", method);
+        if (!ok) {
+          alert("Couldn't close this order — check your connection and try again.");
+          closePrintBtn.disabled = false;
+          return;
+        }
+        printReceipt({
+          tableLabel: o.table_label,
+          orderId: o.id,
+          items: o.items || [],
+          subtotal: o.subtotal,
+          tax: o.tax,
+          total: o.total,
+          paymentMethod: method,
+        });
+        sendReceiptToCustomerWhatsApp(o);
+        pollIncomingOrders();
+      };
+    }
+
+    const editBtn = row.querySelector('[data-action="edit"]');
+    if (editBtn) editBtn.onclick = () => startEditOrder(o);
 
     const voidBtn = row.querySelector('[data-action="void"]');
     if (voidBtn) {
@@ -428,19 +479,92 @@ async function pollIncomingOrders() {
   });
 }
 
-let isWaiterMode = false;
+// Opens a WhatsApp chat, pre-addressed to the customer's number with
+// their receipt filled in, on THIS device. Meant to be tapped on a
+// restaurant-owned device signed into WhatsApp Business as the
+// restaurant — see buildWhatsAppReceiptLinkToCustomer for the full
+// explanation of why this is a tap, not a fully silent send.
+function sendReceiptToCustomerWhatsApp(o) {
+  if (!o.customer_phone) return;
+  const link = buildWhatsAppReceiptLinkToCustomer(o.customer_phone, o, o.items || []);
+  if (!link) return;
+  const toast = document.getElementById("toast");
+  toast.textContent = "Order saved and closed — opening WhatsApp to send the receipt…";
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 2600);
+  window.open(link, "_blank", "noopener");
+}
+
+// Role model:
+//  - kitchen:    sees the kitchen queue (open/preparing orders), advances
+//                open -> preparing -> ready. Can edit an order's items.
+//                No menu picker, no table select, no payment, no print.
+//  - cashier:    sees only orders marked "ready" by the kitchen. No menu,
+//                no editing — just picks a payment method and prints/closes,
+//                which also offers sending the receipt to the customer's
+//                WhatsApp. Never sees the general incoming-orders feed.
+//  - headwaiter: the only waiter role. Takes orders on the POS for guests
+//                without a phone (menu + table select, sends straight to
+//                the kitchen, no payment here), can edit any order, and is
+//                the only role that receives "call waiter" alerts.
+//  - manager/owner: full visibility and control of every order, at every
+//                stage — this is the "eye on everything" role.
+let isKitchen = false;
+let isCashier = false;
+let isHeadwaiter = false;
+let isManagerOwner = false;
+let currentRole = null;
 
 function applyRolePermissions(role) {
-  isWaiterMode = role === "waiter";
+  currentRole = role;
+  isKitchen = role === "kitchen";
+  isCashier = role === "cashier";
+  isHeadwaiter = role === "headwaiter";
+  isManagerOwner = role === "manager" || role === "owner";
+
+  document.querySelector(".brand-tag").textContent =
+    isKitchen ? "Kitchen" : isCashier ? "Cashier" : isHeadwaiter ? "Headwaiter" : "Manager dashboard (POS view)";
+
+  document.getElementById("queue-heading").textContent =
+    isKitchen ? "Kitchen queue" : isCashier ? "Ready to print" : isHeadwaiter ? "Open orders" : "All orders";
+
+  // Only the headwaiter (and manager/owner, for oversight) get the
+  // "call waiter" alerts — cashier and kitchen don't need them.
+  document.getElementById("bell-btn").style.display = (isHeadwaiter || isManagerOwner) ? "block" : "none";
+
+  // Cashier never builds or edits an order, so the cart panel is hidden
+  // entirely for them. Kitchen only needs it while actively editing an
+  // order's items — not for building new ones (they never do that).
+  document.getElementById("pos-order-panel").style.display = (isCashier || (isKitchen && !editingOrderId)) ? "none" : "flex";
+
   const paySelect = document.getElementById("pay-select");
   const printBtn = document.getElementById("btn-print");
-  if (isWaiterMode) {
+  if (isHeadwaiter) {
     paySelect.style.display = "none";
     printBtn.textContent = "Send to kitchen";
   } else {
     paySelect.style.display = "flex";
     printBtn.textContent = "Print receipt & close order";
   }
+
+  // Table select is only for creating a brand-new dine-in order
+  // (headwaiter or manager/owner) — kitchen only ever edits existing
+  // orders, never starts new ones.
+  document.getElementById("table-select").style.display = isKitchen ? "none" : "";
+
+  updateMenuPickerVisibility();
+}
+
+// The item grid is only needed for (a) a headwaiter/manager/owner
+// building a brand-new order, or (b) anyone with edit rights fixing an
+// existing one. Cashier never needs it; kitchen only needs it while
+// actively editing.
+function updateMenuPickerVisibility() {
+  const picker = document.getElementById("menu-picker");
+  if (!picker) return;
+  const canBuildNew = (isHeadwaiter || isManagerOwner) && !editingOrderId;
+  const canEditNow = editingOrderId && (isKitchen || isHeadwaiter || isManagerOwner);
+  picker.style.display = (canBuildNew || canEditNow) ? "" : "none";
 }
 
 function renderCats() {
@@ -511,7 +635,7 @@ function renderOrder() {
   const wrap = document.getElementById("order-lines");
   const totalsWrap = document.getElementById("order-totals");
   const printBtn = document.getElementById("btn-print");
-  printBtn.textContent = editingOrderId ? "Save changes to order" : (isWaiterMode ? "Send to kitchen" : "Print receipt & close order");
+  printBtn.textContent = editingOrderId ? "Save changes to order" : (isHeadwaiter ? "Send to kitchen" : "Print receipt & close order");
   if (order.length === 0) {
     wrap.innerHTML = `<div class="muted" style="text-align:center; padding:30px 10px; font-size:13px;">Tap items to add them to the order</div>`;
     totalsWrap.innerHTML = "";
@@ -549,8 +673,8 @@ function startEditOrder(o) {
   document.getElementById("edit-banner").style.display = "flex";
   document.getElementById("table-select").style.display = "none";
   document.getElementById("pay-select").style.display = "none";
-  document.getElementById("order-source-select").style.display = "none";
-  document.getElementById("wa-phone-input").style.display = "none";
+  document.getElementById("pos-order-panel").style.display = "flex";
+  updateMenuPickerVisibility();
   renderOrder();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -560,10 +684,10 @@ function cancelEditOrder() {
   order = [];
   document.getElementById("order-panel-heading").textContent = "New order";
   document.getElementById("edit-banner").style.display = "none";
-  document.getElementById("table-select").style.display = "";
-  document.getElementById("pay-select").style.display = isWaiterMode ? "none" : "flex";
-  document.getElementById("order-source-select").style.display = "flex";
-  document.getElementById("wa-phone-input").style.display = orderSource === "whatsapp" ? "block" : "none";
+  document.getElementById("table-select").style.display = isKitchen ? "none" : "";
+  document.getElementById("pay-select").style.display = isHeadwaiter ? "none" : "flex";
+  document.getElementById("pos-order-panel").style.display = (isCashier || isKitchen) ? "none" : "flex";
+  updateMenuPickerVisibility();
   renderOrder();
 }
 document.getElementById("btn-cancel-edit").addEventListener("click", cancelEditOrder);
@@ -573,14 +697,6 @@ document.getElementById("pay-select").addEventListener("click", (e) => {
   document.querySelectorAll("#pay-select button").forEach((b) => b.classList.remove("active"));
   e.target.classList.add("active");
   payMethod = e.target.dataset.method;
-});
-
-document.getElementById("order-source-select").addEventListener("click", (e) => {
-  if (e.target.tagName !== "BUTTON") return;
-  document.querySelectorAll("#order-source-select button").forEach((b) => b.classList.remove("active"));
-  e.target.classList.add("active");
-  orderSource = e.target.dataset.source;
-  document.getElementById("wa-phone-input").style.display = orderSource === "whatsapp" ? "block" : "none";
 });
 
 document.getElementById("btn-print").addEventListener("click", async () => {
@@ -601,19 +717,16 @@ document.getElementById("btn-print").addEventListener("click", async () => {
 
   const tableId = document.getElementById("table-select").value;
   const tableLabel = (tables.find((t) => t.id === tableId) || {}).label;
-  const waPhone = document.getElementById("wa-phone-input").value.trim();
   const created = await createOrder({
     restaurantId: CURRENT_RESTAURANT.id,
     tableId,
-    source: orderSource,
-    orderType: tableId ? "dine-in" : "takeaway",
+    source: "pos",
     cart: order,
-    customerPhone: orderSource === "whatsapp" && waPhone ? waPhone : null,
     staffId: loggedInStaff ? loggedInStaff.id : null,
   });
   if (created) {
     const toast = document.getElementById("toast");
-    if (isWaiterMode) {
+    if (isHeadwaiter) {
       // Waiters send the order to the kitchen — it stays "open" and shows
       // up in the incoming-orders queue for a cashier to handle payment
       // and printing later. No payment is taken here.
@@ -633,35 +746,13 @@ document.getElementById("btn-print").addEventListener("click", async () => {
     }
     toast.classList.add("show");
     setTimeout(() => toast.classList.remove("show"), 2200);
-
-    if (orderSource === "whatsapp" && waPhone) {
-      const waLink = buildWhatsAppReceiptLinkTo(waPhone, created, order);
-      const waToast = document.getElementById("wa-send-toast");
-      if (waLink) {
-        document.getElementById("wa-send-text").textContent = `Receipt ready for ${waPhone}`;
-        document.getElementById("wa-send-link").href = waLink;
-        waToast.classList.add("show");
-      }
-    }
-
     order = [];
-    orderSource = "pos";
-    document.querySelectorAll("#order-source-select button").forEach((b) => b.classList.toggle("active", b.dataset.source === "pos"));
-    document.getElementById("wa-phone-input").value = "";
-    document.getElementById("wa-phone-input").style.display = "none";
     renderOrder();
     pollIncomingOrders();
   }
 });
 
 init();
-
-document.getElementById("wa-send-dismiss").addEventListener("click", () => {
-  document.getElementById("wa-send-toast").classList.remove("show");
-});
-document.getElementById("wa-send-link").addEventListener("click", () => {
-  document.getElementById("wa-send-toast").classList.remove("show");
-});
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

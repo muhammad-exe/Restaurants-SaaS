@@ -41,7 +41,6 @@ function getTableTokenFromUrl() {
 
 function clearTimers() {
   if (availabilityTimer) { clearInterval(availabilityTimer); availabilityTimer = null; }
-  stopGamePolling();
   if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
   if (factTimer) { clearInterval(factTimer); factTimer = null; }
 }
@@ -150,8 +149,9 @@ function renderMenuScreen() {
 
     <div class="checkout-form" id="checkout-form" style="display:none;">
       ${addonMode ? "" : `
-        <label style="font-weight:600; color:var(--ink); margin-bottom:6px; display:block;">Your phone number (optional)</label>
-        <input type="tel" id="phone-input" placeholder="03XX XXXXXXX">
+        <label style="font-weight:600; color:var(--ink); margin-bottom:6px; display:block;">Your phone number (required — we send your receipt here on WhatsApp)</label>
+        <input type="tel" id="phone-input" placeholder="03XX XXXXXXX" required>
+        <div class="phone-error" id="phone-error" style="color:var(--danger); font-size:12px; margin:-6px 0 8px;"></div>
         <label><input type="checkbox" id="opt-in" checked> Keep me updated with occasional offers</label>`}
       <button class="btn-primary" id="btn-place-order">${addonMode ? "Add to my order" : "Place order"}</button>
     </div>`;
@@ -330,11 +330,20 @@ async function handlePlaceOrder() {
     return;
   }
 
-  btn.textContent = "Placing order…";
   const phoneEl = document.getElementById("phone-input");
   const optInEl = document.getElementById("opt-in");
   const phone = phoneEl ? phoneEl.value.trim() : "";
   const optIn = optInEl ? optInEl.checked : true;
+
+  if (!phone) {
+    btn.disabled = false;
+    const err = document.getElementById("phone-error");
+    if (err) err.textContent = "Enter your phone number so we can send your receipt on WhatsApp.";
+    if (phoneEl) phoneEl.focus();
+    return;
+  }
+
+  btn.textContent = "Placing order…";
 
   const order = await createOrder({
     restaurantId: CURRENT_RESTAURANT.id,
@@ -362,9 +371,8 @@ function renderOrderConfirmation(order, cartItems, opts) {
   clearTimers();
   const { isAddon, freshlyPlaced } = opts || {};
   const grand = order.total;
-  const waLink = buildWhatsAppReceiptLink(order, cartItems);
   const heading = isAddon ? "Added to your order" : "Order sent to the kitchen";
-  const showGameTab = !!currentTable;
+  const canAddMore = !!currentTable;
 
   root().innerHTML = `
     ${headerHtml()}
@@ -375,16 +383,13 @@ function renderOrderConfirmation(order, cartItems, opts) {
 
       <div class="oc-tracker" id="oc-tracker"></div>
 
-      ${showGameTab ? `
+      ${canAddMore ? `
         <div class="oc-tabs">
           <button class="oc-tab active" id="tab-facts">While you wait</button>
-          <button class="oc-tab" id="tab-game">&#9917; 2-Player Football</button>
+          <button class="oc-tab" id="tab-addon">+ Add items</button>
         </div>
         <div class="oc-panel active" id="panel-facts">
           <div class="oc-fact-card" id="oc-fact-card"></div>
-        </div>
-        <div class="oc-panel" id="panel-game">
-          <div class="gr-wrap" id="gr-wrap"></div>
         </div>
       ` : `
         <div class="oc-fact-card" id="oc-fact-card" style="margin-top:14px;"></div>
@@ -392,19 +397,21 @@ function renderOrderConfirmation(order, cartItems, opts) {
 
       <button class="call-waiter-btn oc-call-waiter" id="btn-call-waiter-tracker">&#128276; Call waiter</button>
 
-      ${waLink ? `<a href="${waLink}" target="_blank" rel="noopener" class="oc-wa-btn">
-          <span class="oc-wa-icon">&#9993;</span> Get my receipt on WhatsApp
-        </a>
-        <p class="muted" style="font-size:11px; margin-top:8px;">Opens WhatsApp with your receipt ready to send — one tap.</p>`
-      : `<p class="muted" style="font-size:12px; margin-top:16px;">WhatsApp receipts aren't set up for this restaurant yet.</p>`}
+      <p class="muted" style="font-size:12px; margin-top:16px;">Your receipt will be sent to your WhatsApp once your order is closed.</p>
+
+      <div id="oc-feedback"></div>
     </div>`;
 
   wireCallWaiterButton("btn-call-waiter-tracker");
 
-  if (showGameTab) {
+  if (canAddMore) {
     document.getElementById("tab-facts").addEventListener("click", () => switchTrackerTab("facts"));
-    document.getElementById("tab-game").addEventListener("click", () => switchTrackerTab("game"));
-    loadGameFrame(order.id);
+    document.getElementById("tab-addon").addEventListener("click", () => {
+      addonMode = true;
+      addonOrderId = order.id;
+      cart = [];
+      loadFreshMenu().then(renderMenuScreen);
+    });
   }
 
   startOrderTracking(order.id, order.status);
@@ -413,9 +420,51 @@ function renderOrderConfirmation(order, cartItems, opts) {
 
 function switchTrackerTab(which) {
   document.getElementById("tab-facts").classList.toggle("active", which === "facts");
-  document.getElementById("tab-game").classList.toggle("active", which === "game");
+  document.getElementById("tab-addon").classList.toggle("active", which === "addon");
   document.getElementById("panel-facts").classList.toggle("active", which === "facts");
-  document.getElementById("panel-game").classList.toggle("active", which === "game");
+}
+
+// ---------------------------------------------------------------------
+// Feedback — shown once the order is fully complete ("closed"), and
+// visible to staff afterward in the order history on the dashboard.
+// ---------------------------------------------------------------------
+let feedbackShownForOrder = null;
+function renderFeedbackForm(orderId) {
+  if (feedbackShownForOrder === orderId) return;
+  feedbackShownForOrder = orderId;
+  const wrap = document.getElementById("oc-feedback");
+  if (!wrap) return;
+  let selectedRating = 0;
+  wrap.innerHTML = `
+    <div class="feedback-card">
+      <h4 style="margin-bottom:6px;">How was your meal?</h4>
+      <div class="feedback-stars" id="feedback-stars">
+        ${[1, 2, 3, 4, 5].map((n) => `<button type="button" class="fb-star" data-star="${n}">&#9734;</button>`).join("")}
+      </div>
+      <textarea id="feedback-comment" placeholder="Anything you'd like to tell us? (optional)" rows="2"></textarea>
+      <button class="btn-primary" id="btn-submit-feedback" disabled>Submit feedback</button>
+      <div class="muted" id="feedback-thanks" style="display:none; font-size:13px; margin-top:8px;">Thanks for letting us know!</div>
+    </div>`;
+
+  const stars = wrap.querySelectorAll(".fb-star");
+  const submitBtn = document.getElementById("btn-submit-feedback");
+  stars.forEach((star) => {
+    star.addEventListener("click", () => {
+      selectedRating = Number(star.dataset.star);
+      stars.forEach((s) => { s.innerHTML = Number(s.dataset.star) <= selectedRating ? "&#9733;" : "&#9734;"; });
+      submitBtn.disabled = false;
+    });
+  });
+
+  submitBtn.addEventListener("click", async () => {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Submitting…";
+    const comment = document.getElementById("feedback-comment").value.trim();
+    await submitFeedback(orderId, selectedRating, comment || null);
+    wrap.querySelector(".feedback-card").style.display = "none";
+    document.getElementById("feedback-thanks").style.display = "block";
+    wrap.appendChild(document.getElementById("feedback-thanks"));
+  });
 }
 
 const WAIT_FACTS = [
@@ -465,47 +514,16 @@ function renderTracker(currentStatus) {
 
 function startOrderTracking(orderId, initialStatus) {
   renderTracker(initialStatus || "open");
+  if (initialStatus === "closed") renderFeedbackForm(orderId);
   statusTimer = setInterval(async () => {
     const s = await getOrderStatus(orderId);
     if (!s) return;
     renderTracker(s.status);
-    if (s.status === "closed") clearInterval(statusTimer);
+    if (s.status === "closed") {
+      clearInterval(statusTimer);
+      renderFeedbackForm(orderId);
+    }
   }, 4000);
-}
-
-// ---------------------------------------------------------------------
-// Two-player football game — lives entirely in game.html, loaded in an
-// iframe so Phaser's own game loop and canvas don't fight with this
-// page's polling. We just tell it which table/order this is for (so
-// two phones scanning the same table's QR end up in the same match)
-// and hand it a fullscreen button.
-// ---------------------------------------------------------------------
-let gameFrameLoaded = false;
-
-function stopGamePolling() {
-  gameFrameLoaded = false;
-}
-
-function loadGameFrame(orderId) {
-  const wrap = document.getElementById("gr-wrap");
-  if (!wrap || gameFrameLoaded) return;
-  gameFrameLoaded = true;
-  const sessionKey = currentTable ? currentTable.id : orderId;
-  wrap.innerHTML = `
-    <div class="game-frame-wrap">
-      <iframe
-        id="game-iframe"
-        src="game.html?session=${encodeURIComponent(sessionKey)}&name=${encodeURIComponent(CURRENT_RESTAURANT.name)}"
-        class="game-iframe"
-        allow="fullscreen"
-        allowfullscreen></iframe>
-      <button class="game-fullscreen-btn" id="btn-game-fullscreen" title="Fullscreen">&#9974;</button>
-    </div>`;
-  document.getElementById("btn-game-fullscreen").addEventListener("click", () => {
-    const frame = document.getElementById("game-iframe");
-    if (frame.requestFullscreen) frame.requestFullscreen();
-    else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
-  });
 }
 
 init();

@@ -188,8 +188,7 @@ create or replace function create_order(
   p_items jsonb,          -- [{menu_item_id, name, price, qty}, ...]
   p_customer_phone text,
   p_staff_id uuid,
-  p_marketing_opt_in boolean default true,
-  p_order_type text default null   -- 'dine-in' | 'takeaway' | 'delivery'; auto-detected from p_table_id if omitted
+  p_marketing_opt_in boolean default true
 )
 returns table (id uuid, subtotal numeric, tax numeric, total numeric, source text, status text, created_at timestamptz)
 language plpgsql security definer as $$
@@ -200,7 +199,6 @@ declare
   v_tax_rate numeric;
   v_customer_id uuid;
   v_item jsonb;
-  v_order_type text;
 begin
   select tax_rate into v_tax_rate from restaurants where restaurants.id = p_restaurant_id;
 
@@ -210,8 +208,6 @@ begin
 
   v_tax := round(v_subtotal * v_tax_rate);
 
-  v_order_type := coalesce(p_order_type, case when p_table_id is null then 'takeaway' else 'dine-in' end);
-
   if p_customer_phone is not null and length(p_customer_phone) > 0 then
     insert into customers (restaurant_id, phone, marketing_opt_in)
     values (p_restaurant_id, p_customer_phone, p_marketing_opt_in)
@@ -219,8 +215,8 @@ begin
     returning customers.id into v_customer_id;
   end if;
 
-  insert into orders (restaurant_id, table_id, order_type, source, status, subtotal, tax, total, customer_id, staff_id)
-  values (p_restaurant_id, p_table_id, v_order_type, p_source, 'open', v_subtotal, v_tax, v_subtotal + v_tax, v_customer_id, p_staff_id)
+  insert into orders (restaurant_id, table_id, source, status, subtotal, tax, total, customer_id, staff_id)
+  values (p_restaurant_id, p_table_id, p_source, 'open', v_subtotal, v_tax, v_subtotal + v_tax, v_customer_id, p_staff_id)
   returning orders.id into v_order_id;
 
   for v_item in select * from jsonb_array_elements(p_items) loop
@@ -692,20 +688,6 @@ begin
 end;
 $$;
 grant execute on function remove_table to anon;
-
--- ---------- Owner-editable restaurant settings (WhatsApp number) ----------
-create or replace function update_restaurant_settings(p_restaurant_id uuid, p_whatsapp_number text)
-returns table (id uuid, whatsapp_number text)
-language plpgsql security definer as $$
-begin
-  return query
-    update restaurants
-    set whatsapp_number = nullif(trim(p_whatsapp_number), '')
-    where restaurants.id = p_restaurant_id
-    returning restaurants.id, restaurants.whatsapp_number;
-end;
-$$;
-grant execute on function update_restaurant_settings to anon;
 
 
 -- ============================================================

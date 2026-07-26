@@ -88,29 +88,9 @@ function renderQrCodes() {
   const grid = document.getElementById("qr-grid");
   grid.innerHTML = "";
 
-  const takeawayUrl = baseUrl
-    ? `${baseUrl}/menu.html`
-    : `${window.location.origin}${window.location.pathname.replace("qr-codes.html", "")}menu.html`;
-  const takeawayCard = document.createElement("div");
-  takeawayCard.className = "qr-card";
-  takeawayCard.innerHTML = `<div class="qr-box" id="qr-takeaway"></div>
-    <div class="qr-label">Takeaway</div>
-    <div class="qr-url">${takeawayUrl}</div>`;
-  grid.appendChild(takeawayCard);
-  new QRCode(document.getElementById("qr-takeaway"), {
-    text: takeawayUrl,
-    width: 170,
-    height: 170,
-    colorDark: "#211F1B",
-    colorLight: "#ffffff",
-  });
-
   if (!tables.length) {
-    const note = document.createElement("div");
-    note.className = "muted";
-    note.style.gridColumn = "1 / -1";
-    note.textContent = "No dine-in tables yet — add them from the owner dashboard's Tables panel.";
-    grid.appendChild(note);
+    grid.innerHTML = `<div class="muted">No tables found — add rows to restaurant_tables in Supabase's Table Editor first.</div>`;
+    return;
   }
 
   tables.forEach((t) => {

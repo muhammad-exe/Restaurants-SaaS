@@ -4,8 +4,8 @@ This is a real, working app — not a demo. Order data is saved to an actual
 database, and it will keep working after you close the tab. Total cost to
 run this for your first several restaurants: **$0/month.**
 
-> **Already set up a Supabase project?** Thirteen migration files may
-> apply to you, run in your Supabase SQL Editor in this order if you
+> **Already set up a Supabase project?** Migration files may apply to
+> you — run them in your Supabase SQL Editor in this order if you
 > haven't already:
 > 1. `supabase/migration_v2_security.sql` — locks down the database (see below)
 > 2. `supabase/migration_v3_menu_images.sql` — adds photos to the demo menu items
@@ -20,33 +20,25 @@ run this for your first several restaurants: **$0/month.**
 > 11. `supabase/migration_v12_availability_and_addon.sql` — adds the "86 an item" toggle and the add-on-order flow
 > 12. `supabase/migration_v13_order_crud_and_fixes.sql` — adds order editing/voiding, and **fixes a real bug** where the customer waiting page only appeared for QR-placed orders, never ones staff entered on the POS
 > 13. `supabase/migration_v14_table_management.sql` — adds the Tables panel on the owner dashboard
+> 14. `supabase/migration_v15_chai_jaan_client.sql` — adds the Chai Jaan client data (see its own header comment, and the "Onboarding Chai Jaan" section below, before running it)
+> 15. `supabase/migration_v16_workflow_roles_feedback.sql` — **run this last** — adds the kitchen/headwaiter roles, makes the customer's phone number required (for WhatsApp receipts), adds the feedback table, and updates the Staff panel's permissions. See "Kitchen, headwaiter, cashier — how orders flow now" below.
 >
 > All are safe to run more than once and don't touch your existing
 > tables or data.
->
-> **⚠️ Run `migration_v15_chai_jaan_client.sql` LAST, and read its own
-> header comment before running it** — unlike the others, this one adds
-> real client data (not just functions), and you need to change one
-> line in `js/config.js` *after* running it, not before. See the
-> "Onboarding Chai Jaan" section below for the full sequence.
->
-> **The 2-player football game needs no migration at all** — it doesn't
-> use the database, only Supabase Realtime (already part of your
-> project), so there's nothing to run for it. See the section below
-> for the one thing worth double-checking in your Supabase dashboard.
 
 It has three pages:
-- `pos.html` — the cashier screen — now also shows **live incoming
-  orders** (including QR orders customers placed themselves), and
-  requires a staff password to open.
+- `pos.html` — the shared staff screen, opened by **kitchen, headwaiter,
+  cashier, manager, or owner** logins — each sees a different, narrower
+  view of it. Requires a staff password.
 - `menu.html` — the customer-facing QR ordering page — no login, this
   one's meant to be open to anyone who scans the table code.
-- `dashboard.html` — the owner's sales dashboard — requires an
-  **owner/manager** account specifically; a cashier's password won't open it.
+- `dashboard.html` — the sales dashboard — requires an **owner/manager**
+  account specifically; a cashier's password won't open it.
 
 All three talk to one shared database (Supabase), so an order placed on
 `menu.html` shows up instantly on `dashboard.html` **and** on the
-`pos.html` incoming-orders panel, so staff always know a QR order came in.
+`pos.html` kitchen queue, so staff always know a QR order came in.
+
 
 ---
 
@@ -130,7 +122,8 @@ something:
   mobile app) and an **"On my way"** button to dismiss it.
 - Each staff member can mute/unmute the beep for their own device via
   the 🔔/🔕 icon next to their name — this is per-device, not global,
-  so muting it at the counter doesn't silence it on a waiter's phone.
+  so muting it at the counter doesn't silence it on the headwaiter's
+  phone.
 - **The customer never gets a mute option** — only staff can mute the
   alert sound; the call itself always goes through.
 - If a table rings **more than 5 times** without being acknowledged,
@@ -144,35 +137,34 @@ something:
   login, then stays unlocked for the rest of that session, on the
   website, the desktop app, and the mobile app alike.
 
-## Editing and voiding orders — full CRUD
+## Editing and voiding orders — who can do what now
 
-Every signed-in staff member on the POS — cashier, waiter, manager, or
-owner — can now tap **"Edit"** on any order in the "Incoming orders"
-list to fix a mistake: wrong item, wrong quantity, whatever. It loads
-that order's real items into the order-building panel, the table and
-payment selectors hide (you're not moving the order or taking payment,
-just fixing its contents), and the button changes to **"Save changes
-to order."** Cancel is always available if you back out.
+**Editing** an order's items (fixing a wrong item or quantity) is
+restricted to **kitchen, headwaiter, manager, and owner** — a cashier
+can't edit, only print and close what the kitchen already sent them.
+Tapping **"Edit"** loads that order's real items into the order-building
+panel, hides the table/payment selectors, and the button changes to
+**"Save changes to order."** Cancel is always available if you back out.
 
-**Voiding** an order — cancelling it outright — is restricted to
-cashier, manager, and owner (not waiter), matching the same pattern
-already used for closing/payment. It doesn't delete the order; it sets
-its status to `void` so it still shows up in your records as "this was
-cancelled" rather than disappearing, and it correctly stops counting
-toward sales totals.
+**Voiding** an order — cancelling it outright — stays with **cashier,
+manager, and owner** (not headwaiter or kitchen). It doesn't delete the
+order; it sets its status to `void` so it still shows up in your
+records as "this was cancelled" rather than disappearing, and it
+correctly stops counting toward sales totals.
 
 ## Marking an item out of stock ("86-ing" it)
 
-Any signed-in staff member — cashier, waiter, manager, or owner — can
-tap the small ✕ in the corner of an item's card on the POS to mark it
-out of stock. It grays out immediately with an "Out of stock" badge
-and can't be tapped to add to an order from the POS. The customer QR
-menu picks up the change automatically — a sold-out dish disappears
-from their menu the next time it polls (every 15 seconds while
-they're browsing), and if it was already in their cart when it sold
-out, it's quietly removed with a heads-up message rather than letting
-them order something that no longer exists. Tap the ↻ that appears on
-a grayed-out item to bring it back in stock.
+Any signed-in staff member who can see the menu grid on the POS
+(headwaiter, kitchen while editing, manager, or owner) can tap the
+small ✕ in the corner of an item's card to mark it out of stock. It
+grays out immediately with an "Out of stock" badge and can't be tapped
+to add to an order. The customer QR menu picks up the change
+automatically — a sold-out dish disappears from their menu the next
+time it polls (every 15 seconds while they're browsing), and if it was
+already in their cart when it sold out, it's quietly removed with a
+heads-up message rather than letting them order something that no
+longer exists. Tap the ↻ that appears on a grayed-out item to bring it
+back in stock.
 
 ## Add-on orders — rescanning a table mid-meal
 
@@ -187,51 +179,30 @@ deciding for them:
 - **"View my order & wait time"** — goes straight to the live tracker,
   same as before.
 
-## Two-player football — the real game, not a placeholder
+## Feedback — replaces the old waiting-room game
 
-The waiting page has a second tab, **"⚽ 2-Player Football"**, next to
-the food-facts tab. This is the actual side-scrolling football game
-(sprites, physics, jumping, kicking) — not a simplified
-guess-a-corner minigame.
+The waiting page no longer has a game. Instead, once an order reaches
+`closed` (the cashier has printed and closed it), a **star rating +
+optional comment** form appears right there on the same screen the
+customer's been watching. It's saved via `submit_feedback()` and shows
+up automatically next to that order in **Recent orders / order
+history on the dashboard** — owner and manager see it, nobody needs to
+go looking for it separately. A customer can only leave one rating per
+order; submitting again updates the same entry rather than creating a
+duplicate.
 
-**How the multiplayer works:** the original game was written for a
-dedicated Node.js + socket.io server, which this app doesn't have —
-only Supabase. So the networking layer was swapped for **Supabase
-Realtime** (broadcast + presence), which does the same job (instant
-position/ball sync between two phones) using infrastructure you
-already have for free, no separate server to run or pay for.
+The old game files (`game.html`, `js/game.js`, `game-assets/`) have
+been removed from this project.
 
-- The **first phone** to open the game tab at a given table becomes
-  Player 1; the **second** becomes Player 2 — matched automatically by
-  table, so only people at the same table end up in the same match.
-- A third phone scanning the same table sees a "match is full"
-  message rather than breaking the other two players' game.
-- **Controls**: on-screen left/right buttons plus a jump button
-  (bottom of the screen) — kicking happens automatically when your
-  player touches the ball, same as the original game. A physical
-  keyboard (left/right arrows, up to jump) also works if tested on a
-  laptop.
-- **Fullscreen button** in the top corner of the game.
-- **Characters and ball are sized up** from the original game — players
-  are roughly half the goal's height, the ball's a bit bigger too, so
-  everything's easy to see and hit on a phone screen.
-- First to 5 goals wins; a real **"Play again"** button appears on the
-  end screen (not a tap-anywhere zone, which turned out to be
-  unreliable inside an iframe on some phones — this button uses the
-  same proven mechanism as the on-screen movement controls).
+## "Add items" directly from the waiting screen
 
-**One thing worth checking in your Supabase dashboard:** Realtime is
-on by default for new projects, but if your project is older or
-you've changed settings, confirm it under **Project Settings →
-API → Realtime** (or **Database → Replication** depending on your
-dashboard version) — broadcast and presence (what this game uses)
-don't need any table-level replication turned on, just Realtime
-itself enabled at the project level.
-
-**Files involved, if you ever want to change the game:**
-`game.html` (the screen + on-screen controls), `js/game.js` (the game
-logic and the Realtime networking), `game-assets/` (sprites and
-images — swap these for your own art if you want to reskin it).
+The waiting page now has an **"+ Add items"** tab right next to "While
+you wait" — no need to rescan the table's QR code mid-meal anymore
+(rescanning still works too, as a fallback). Tapping it drops the
+customer back into the menu in add-on mode; whatever they add gets
+appended to the *same* order, and if the kitchen had already marked it
+"preparing" or "ready," it correctly bumps back to "open" so the new
+items don't get missed.
 
 ## Order resume — customer accidentally closes the tracker screen
 
@@ -242,35 +213,63 @@ tracker instead of showing the menu from scratch — as long as that
 order hasn't been closed out yet. No login, no order number to
 remember, just rescan the same code.
 
-## Manager/owner password opening the cashier POS — this is correct
+## How an order actually flows now — kitchen, headwaiter, cashier
 
-If you tried logging into `pos.html` with a manager or owner password
-and it opened the full till screen — that's intentional, not a bug.
-Only **waiter** accounts get the restricted "send to kitchen, no
-payment" screen; owner, manager, and cashier all get full POS access,
-since an owner or manager covering a shift should be able to do
-everything a cashier can.
+This is the core of the new workflow:
 
-## Role-based POS behavior
+1. **Customer scans the table QR, orders, and gives their phone
+   number** (now required — it's how the receipt reaches them on
+   WhatsApp). The order goes straight to the **kitchen** — no cashier
+   or waiter has to relay it.
+2. **Kitchen** sees it appear in their queue immediately, taps **"Start
+   preparing"** then **"Mark ready"** as they cook. Each step updates
+   the customer's live tracker on their phone in real time. Kitchen can
+   also **edit** an order (fix a wrong item/quantity) but never takes
+   payment or prints anything.
+3. Once marked **"ready,"** the order — and *only* orders at that stage
+   — appears on the **cashier's** screen. The cashier has no menu, no
+   incoming-orders feed cluttering their view, nothing to build — just
+   a payment method dropdown and a **"Print & close"** button per
+   order.
+4. Closing the order prints the receipt **and**, if the customer gave a
+   phone number, automatically opens WhatsApp addressed to that
+   customer with the receipt pre-filled — see the WhatsApp section
+   below for exactly how that works and its one limitation.
+5. **Headwaiter** — the only waiter role now — doesn't handle the
+   kitchen queue or payment at all. Their screen exists for two things:
+   taking an order on the spot for a guest **without a phone** (menu +
+   table picker, sent straight to the kitchen, no payment collected
+   here), and **editing** any order. They're also the only staff role
+   that receives **"Call waiter" alerts** — cashier and kitchen screens
+   don't show that panel at all.
+6. **Manager and owner** see and can act on everything, at every
+   stage — the full incoming-orders feed, kitchen progression, closing,
+   editing, and voiding — both on the POS and in a dedicated **"Live
+   orders"** panel on the dashboard, so oversight doesn't require
+   logging into the POS at all.
 
-The POS screen now looks different depending on who's logged in — same
-app, same URL, no separate builds needed:
+## Manager/owner opening the POS
 
-- **Waiter** — sees the menu and can build an order, but the button
-  reads **"Send to kitchen"** instead of "Print receipt & close
-  order," and there's no payment method selector. The order goes
-  straight into the incoming-orders queue as `open`, same as a QR
-  order would. In that same queue, a waiter can still move an order
-  through "Start preparing" → "Mark ready" (kitchen coordination), but
-  the final "Close & print receipt" step is replaced with **"Ask
-  cashier to close"** — waiters can't take payment or trigger a print.
-- **Cashier / Manager / Owner** — full access: build orders, take
-  payment, print receipts, close out any order including ones a waiter
-  sent in.
+If you log into `pos.html` with a manager or owner password and it
+opens a screen with full visibility and control (not the narrower
+kitchen/cashier/headwaiter views) — that's intentional. Manager and
+owner get the "eye on everything" view everywhere, including here.
 
-No new database changes were needed for this — it's driven entirely
-by the `role` value already returned from the password check, applied
-in `pos.html`'s `applyRolePermissions()` function.
+## Role-based POS behavior — summary
+
+The POS screen looks completely different depending on who's logged
+in — same app, same URL, no separate builds needed:
+
+| Role | Sees | Can do |
+|---|---|---|
+| **Kitchen** | Open + preparing orders only | Start preparing, mark ready, edit items |
+| **Cashier** | Orders marked "ready" only | Pick payment method, print & close, send WhatsApp receipt, void |
+| **Headwaiter** | All open orders + call-waiter alerts | Take new orders for guests without a phone, edit any order |
+| **Manager / Owner** | Everything, every stage | Everything — advance, edit, void, close, print |
+
+This is driven entirely by the `role` value returned from the password
+check, applied in `pos.html`'s `applyRolePermissions()` function — no
+separate builds or URLs per role.
 
 ## Receipt printing — how it actually works now
 
@@ -451,7 +450,8 @@ your first few pilot restaurants.
 Both `pos.html` and `dashboard.html` now open on a password sign-in
 screen — a real text password field, not a 4-digit PIN pad.
 
-- **POS** accepts any staff role (owner, manager, cashier, waiter).
+- **POS** accepts any staff role (owner, manager, cashier, kitchen,
+  headwaiter).
 - **Dashboard** only accepts `owner` or `manager` accounts — a
   cashier's password won't open it.
 - The demo data includes two logins:
@@ -518,13 +518,17 @@ order flow** for rescanning mid-meal, owner dashboard with real
 sales/top-items/order-source queries filtered by day/week/month and
 **auto-refreshing every 20 seconds**, **real hashed password login**
 on both POS and dashboard (role-restricted, full CRUD via the Staff
-panel), a live **incoming orders panel on the POS**, **role-based POS
-screens** (waiters can't take payment), **real receipt printing**, a
-**live order tracker + rotating facts + resume-on-rescan (now correct
-for POS-entered orders too, not just QR ones) + a call-waiter button +
-a real 2-player football game with bigger characters, on-screen
-controls, a reliable "Play again" button, and fullscreen** on the
-customer's waiting screen, a **real call-waiter ring bell** (long,
+panel), a live **incoming orders panel on the POS** (role-scoped —
+kitchen sees open orders, cashier sees only orders ready to print),
+**role-based POS screens** (kitchen/headwaiter/cashier/manager each
+see only what their job needs), **real receipt printing** with an
+automatic **WhatsApp receipt to the customer's own number** when the
+cashier closes the order, a **live order tracker + rotating facts +
+an "+ Add items" add-on tab + resume-on-rescan (now correct for
+POS-entered orders too, not just QR ones) + a call-waiter button +
+a post-close **star rating and comment feedback form** (visible to
+managers in order history) on the customer's waiting screen, a
+**real call-waiter ring bell** (long,
 loud ringtone with vibration and OS notifications) that reaches POS
 and the owner dashboard together, with staff mute and owner escalation
 past 5 rings, a **QR code generator/printer page**, an **installable
