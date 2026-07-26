@@ -1,4 +1,4 @@
-const CACHE_NAME = "dastarkhwan-pos-v2";
+const CACHE_NAME = "dastarkhwan-pos-v3";
 const SHELL_FILES = [
   "pos.html",
   "css/style.css",
@@ -26,24 +26,25 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Cache-first for the app shell files (HTML/CSS/JS/icons) so the till
-// still opens with no signal. Live data (menu, orders, PIN checks) still
-// goes over the network every time — this only covers the app shell,
-// not order data, so it never shows stale sales numbers.
+// Network-first for the app shell files (HTML/CSS/JS/icons): always try
+// to fetch the latest version first, so a code update shows up on the
+// very next open — not "one load behind", which is what a cache-first
+// strategy does (serve the old cached copy immediately, only refresh the
+// cache quietly in the background for NEXT time). Cache is only used as
+// a fallback when there's genuinely no signal, so the till still opens
+// offline. Live data (menu, orders, PIN checks) still goes over the
+// network every time regardless — this only covers the app shell.
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   const isShellFile = SHELL_FILES.some((f) => url.pathname.endsWith(f));
   if (!isShellFile) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
-        .then((response) => {
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(event.request)
+      .then((response) => {
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
