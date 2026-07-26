@@ -38,6 +38,13 @@ update staff set role = 'headwaiter' where role = 'waiter';
 -- and a leftover overload makes the GRANT below ambiguous.
 drop function if exists create_order(uuid, uuid, text, jsonb, text, uuid);
 drop function if exists create_order(uuid, uuid, text, jsonb, text, uuid, boolean);
+-- This one isn't defined anywhere in these migrations — it must have been
+-- added directly in the Supabase SQL editor at some point (possibly an
+-- earlier dine-in/takeaway experiment). No current frontend code sends
+-- p_order_type, so a live database that still has this overload makes
+-- every create_order call ambiguous to PostgREST ("could not choose the
+-- best candidate function"), which is what breaks QR ordering entirely.
+drop function if exists create_order(uuid, uuid, text, jsonb, text, uuid, boolean, text);
 create or replace function create_order(
   p_restaurant_id uuid,
   p_table_id uuid,
