@@ -148,11 +148,6 @@ function renderMenuScreen() {
     <div class="cart-detail" id="cart-detail" style="display:none;"></div>
 
     <div class="checkout-form" id="checkout-form" style="display:none;">
-      ${addonMode ? "" : `
-        <label style="font-weight:600; color:var(--ink); margin-bottom:6px; display:block;">Your phone number (required — we send your receipt here on WhatsApp)</label>
-        <input type="tel" id="phone-input" placeholder="03XX XXXXXXX" required>
-        <div class="phone-error" id="phone-error" style="color:var(--danger); font-size:12px; margin:-6px 0 8px;"></div>
-        <label><input type="checkbox" id="opt-in" checked> Keep me updated with occasional offers</label>`}
       <button class="btn-primary" id="btn-place-order">${addonMode ? "Add to my order" : "Place order"}</button>
     </div>`;
 
@@ -330,19 +325,6 @@ async function handlePlaceOrder() {
     return;
   }
 
-  const phoneEl = document.getElementById("phone-input");
-  const optInEl = document.getElementById("opt-in");
-  const phone = phoneEl ? phoneEl.value.trim() : "";
-  const optIn = optInEl ? optInEl.checked : true;
-
-  if (!phone) {
-    btn.disabled = false;
-    const err = document.getElementById("phone-error");
-    if (err) err.textContent = "Enter your phone number so we can send your receipt on WhatsApp.";
-    if (phoneEl) phoneEl.focus();
-    return;
-  }
-
   btn.textContent = "Placing order…";
 
   const order = await createOrder({
@@ -350,8 +332,8 @@ async function handlePlaceOrder() {
     tableId: currentTable ? currentTable.id : null,
     source: "qr",
     cart,
-    customerPhone: phone || null,
-    marketingOptIn: optIn,
+    customerPhone: null,
+    marketingOptIn: false,
   });
 
   if (!order) {
@@ -396,8 +378,6 @@ function renderOrderConfirmation(order, cartItems, opts) {
       `}
 
       <button class="call-waiter-btn oc-call-waiter" id="btn-call-waiter-tracker">&#128276; Call waiter</button>
-
-      <p class="muted" style="font-size:12px; margin-top:16px;">Your receipt will be sent to your WhatsApp once your order is closed.</p>
 
       <div id="oc-feedback"></div>
     </div>`;

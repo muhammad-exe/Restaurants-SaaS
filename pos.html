@@ -17,7 +17,7 @@
       <div class="brand-mark" id="brand-mark">D</div>
       <div><div class="brand-name" id="r-name">Loading…</div><div class="brand-tag">Cashier POS</div></div>
     </div>
-    <div class="nav-links"></div>
+    <div class="nav-links" id="nav-links"></div>
     <button class="bell-btn" id="bell-btn" style="display:none;" title="Mute/unmute call alerts">&#128276;</button>
     <div class="staff-badge" id="staff-badge" style="display:none;"></div>
   </div>
@@ -37,6 +37,15 @@
       <div class="panel card" id="calls-panel" style="display:none; margin-bottom:16px; border-color:var(--danger);">
         <h4 style="color:var(--danger);">&#128276; Tables calling for service</h4>
         <div id="table-calls"></div>
+      </div>
+      <div class="panel card" id="manager-tables-panel" style="display:none; margin-bottom:16px;">
+        <h4>Tables</h4>
+        <div id="manager-tables-list"></div>
+        <div class="staff-add-form" id="manager-table-add-form">
+          <input type="text" id="manager-table-label" placeholder="e.g. Table 5, Patio 2">
+          <button id="btn-manager-add-table">Add table</button>
+        </div>
+        <div class="staff-error" id="manager-table-error"></div>
       </div>
       <div id="menu-picker">
         <div class="pos-cats" id="pos-cats"></div>
@@ -370,17 +379,17 @@ async function pollIncomingOrders() {
       kitchenActionHtml = `<button class="btn-mini" data-action="advance" data-next="${nextAction}">${nextLabel}</button>`;
     }
 
-    // ---- Manager/owner: full control, including closing straight from here ----
+    // ---- Owner: full control, including closing straight from here.
+    // Manager is view-only in the POS — oversight only, no actions. ----
     let managerActionHtml = "";
-    if (isManagerOwner) {
+    if (isOwner) {
       const nextAction = o.status === "open" ? "preparing" : o.status === "preparing" ? "ready" : "closed";
       const nextLabel = o.status === "open" ? "Start preparing" : o.status === "preparing" ? "Mark ready" : "Close & print";
       managerActionHtml = `<button class="btn-mini" data-action="advance" data-next="${nextAction}">${nextLabel}</button>`;
     }
 
-    // ---- Cashier: pick a payment method, print, close, and (if the
-    // customer gave a phone number) send the receipt to their WhatsApp
-    // from this device. ----
+    // ---- Cashier: pick a payment method, print, and close. No WhatsApp
+    // receipt is sent from this flow. ----
     let cashierHtml = "";
     if (isCashier) {
       cashierHtml = `
@@ -392,11 +401,12 @@ async function pollIncomingOrders() {
         <button class="btn-mini btn-primary" data-action="close-print">Print &amp; close</button>`;
     }
 
-    // Only headwaiter/kitchen/manager/owner can edit — never cashier.
-    const editHtml = !isCashier ? `<button class="btn-mini" data-action="edit">Edit</button>` : "";
+    // Only headwaiter/kitchen/owner can edit — never cashier, and never
+    // manager (manager's POS view is read-only oversight now).
+    const editHtml = (!isCashier && !isManager) ? `<button class="btn-mini" data-action="edit">Edit</button>` : "";
     // Voiding stays with whoever can also take payment/oversee — cashier
-    // and manager/owner — not headwaiter or kitchen.
-    const voidHtml = (isCashier || isManagerOwner) ? `<button class="btn-mini btn-void" data-action="void">Void</button>` : "";
+    // and owner — not headwaiter, kitchen, or manager.
+    const voidHtml = (isCashier || isOwner) ? `<button class="btn-mini btn-void" data-action="void">Void</button>` : "";
 
     row.innerHTML = `<div>
         <div class="l-name">${o.table_label || "Takeaway"} · ${sourceLabel} · <span style="text-transform:capitalize;">${o.status}</span></div>
@@ -458,15 +468,9 @@ async function pollIncomingOrders() {
         const payMethodSelect = row.querySelector(`[data-pay="${o.id}"]`);
         const method = payMethodSelect ? payMethodSelect.value : "cash";
         closePrintBtn.disabled = true;
-        // Same reasoning as above — build the real link and open it now,
-        // synchronously, before the "await" below.
-        const waLink = o.customer_phone
-          ? buildWhatsAppReceiptLinkToCustomer(o.customer_phone, o, o.items || [])
-          : null;
-        const waWin = waLink ? window.open(waLink, "_blank", "noopener") : null;
+        // Cashier flow: print & close only — no WhatsApp receipt is sent.
         const ok = await updateOrderStatus(o.id, "closed", method);
         if (!ok) {
-          if (waWin) waWin.close();
           alert("Couldn't close this order — check your connection and try again.");
           closePrintBtn.disabled = false;
           return;
@@ -480,7 +484,6 @@ async function pollIncomingOrders() {
           total: o.total,
           paymentMethod: method,
         });
-        showWhatsAppToast(waWin);
         pollIncomingOrders();
       };
     }
@@ -519,19 +522,29 @@ function showWhatsAppToast(waWin) {
 //                open -> preparing -> ready. Can edit an order's items.
 //                No menu picker, no table select, no payment, no print.
 //  - cashier:    sees only orders marked "ready" by the kitchen. No menu,
-//                no editing — just picks a payment method and prints/closes,
-//                which also offers sending the receipt to the customer's
-//                WhatsApp. Never sees the general incoming-orders feed.
+//                no editing — just picks a payment method and prints/closes
+//                the order. No WhatsApp receipt is sent from this flow.
+//                Never sees the general incoming-orders feed.
 //  - headwaiter: the only waiter role. Takes orders on the POS for guests
 //                without a phone (menu + table select, sends straight to
 //                the kitchen, no payment here), can edit any order, and is
 //                the only role that receives "call waiter" alerts.
-//  - manager/owner: full visibility and control of every order, at every
-//                stage — this is the "eye on everything" role.
+//  - manager:    view-only oversight of every order, at every stage — sees
+//                everything but never edits, voids, advances, or closes
+//                an order from here. (Full management — sales, staff,
+//                tables, live orders — lives on the dashboard instead;
+//                see the "Dashboard" nav link.)
+//  - owner:      full visibility and control of every order, at every
+//                stage — this is the "eye on everything" role. Never
+//                builds a brand-new order from the menu (that's the
+//                headwaiter's job) but can still edit an existing order's
+//                items when needed.
 let isKitchen = false;
 let isCashier = false;
 let isHeadwaiter = false;
 let isManagerOwner = false;
+let isManager = false;
+let isOwner = false;
 let currentRole = null;
 
 function applyRolePermissions(role) {
@@ -539,10 +552,12 @@ function applyRolePermissions(role) {
   isKitchen = role === "kitchen";
   isCashier = role === "cashier";
   isHeadwaiter = role === "headwaiter";
-  isManagerOwner = role === "manager" || role === "owner";
+  isManager = role === "manager";
+  isOwner = role === "owner";
+  isManagerOwner = isManager || isOwner;
 
   document.querySelector(".brand-tag").textContent =
-    isKitchen ? "Kitchen" : isCashier ? "Cashier" : isHeadwaiter ? "Headwaiter" : "Manager dashboard (POS view)";
+    isKitchen ? "Kitchen" : isCashier ? "Cashier" : isHeadwaiter ? "Headwaiter" : isManager ? "Manager (view only)" : "Owner";
 
   document.getElementById("queue-heading").textContent =
     isKitchen ? "Kitchen queue" : isCashier ? "Ready to print" : isHeadwaiter ? "Open orders" : "All orders";
@@ -552,9 +567,10 @@ function applyRolePermissions(role) {
   document.getElementById("bell-btn").style.display = (isHeadwaiter || isManagerOwner) ? "block" : "none";
 
   // Cashier never builds or edits an order, so the cart panel is hidden
-  // entirely for them. Kitchen only needs it while actively editing an
-  // order's items — not for building new ones (they never do that).
-  document.getElementById("pos-order-panel").style.display = (isCashier || (isKitchen && !editingOrderId)) ? "none" : "flex";
+  // entirely for them. Kitchen and owner only need it while actively
+  // editing an order's items — manager is view-only and never edits, so
+  // this panel never opens for them either.
+  document.getElementById("pos-order-panel").style.display = (isCashier || ((isKitchen || isManagerOwner) && !editingOrderId)) ? "none" : "flex";
 
   const paySelect = document.getElementById("pay-select");
   const printBtn = document.getElementById("btn-print");
@@ -566,23 +582,76 @@ function applyRolePermissions(role) {
     printBtn.textContent = "Print receipt & close order";
   }
 
-  // Table select is only for creating a brand-new dine-in order
-  // (headwaiter or manager/owner) — kitchen only ever edits existing
-  // orders, never starts new ones.
-  document.getElementById("table-select").style.display = isKitchen ? "none" : "";
+  // Table select is only for creating a brand-new dine-in order, which is
+  // the headwaiter's job alone now — kitchen and manager/owner only ever
+  // edit existing orders, never start new ones from here.
+  document.getElementById("table-select").style.display = (isKitchen || isManagerOwner) ? "none" : "";
+
+  // Managing the restaurant's tables (adding/removing) is a manager-only
+  // job, same as on the dashboard — owner doesn't get this here either.
+  document.getElementById("manager-tables-panel").style.display = role === "manager" ? "block" : "none";
+  if (role === "manager") renderManagerTablesList();
+
+  // Manager and owner get a link back to the full dashboard (sales,
+  // staff, tables, live orders) — everyone else stays focused on the POS.
+  document.getElementById("nav-links").innerHTML = isManagerOwner
+    ? `<a href="dashboard.html">Dashboard</a>`
+    : "";
 
   updateMenuPickerVisibility();
 }
+async function refreshTablesEverywhere() {
+  tables = await listTables(CURRENT_RESTAURANT.id);
+  const sel = document.getElementById("table-select");
+  sel.innerHTML = tables.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+  renderManagerTablesList();
+}
 
-// The item grid is only needed for (a) a headwaiter/manager/owner
-// building a brand-new order, or (b) anyone with edit rights fixing an
-// existing one. Cashier never needs it; kitchen only needs it while
-// actively editing.
+function renderManagerTablesList() {
+  const wrap = document.getElementById("manager-tables-list");
+  wrap.innerHTML = tables.length
+    ? tables.map((t) => `<div class="top-item-row">
+        <span class="ti-name">${t.label}</span>
+        <button class="btn-mini" data-remove-table="${t.id}">Remove</button>
+      </div>`).join("")
+    : `<div class="muted" style="font-size:13px;">No tables added yet.</div>`;
+
+  wrap.querySelectorAll("[data-remove-table]").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm("Remove this table? Its QR code will stop working.")) return;
+      await removeTable(btn.dataset.removeTable);
+      refreshTablesEverywhere();
+    };
+  });
+}
+
+document.getElementById("btn-manager-add-table").addEventListener("click", async () => {
+  const input = document.getElementById("manager-table-label");
+  const label = input.value.trim();
+  const errorEl = document.getElementById("manager-table-error");
+  errorEl.textContent = "";
+
+  if (!label) { errorEl.textContent = "Enter a table name or number."; return; }
+
+  const result = await addTable(CURRENT_RESTAURANT.id, label);
+  if (result.error) {
+    errorEl.textContent = result.error;
+    return;
+  }
+  input.value = "";
+  refreshTablesEverywhere();
+});
+
+// The item grid (menu) is only needed for (a) the headwaiter building a
+// brand-new order, or (b) anyone with edit rights fixing an existing one.
+// Cashier never needs it; kitchen and owner only need it while actively
+// editing. Manager's POS view is read-only oversight — never builds or
+// edits an order from here.
 function updateMenuPickerVisibility() {
   const picker = document.getElementById("menu-picker");
   if (!picker) return;
-  const canBuildNew = (isHeadwaiter || isManagerOwner) && !editingOrderId;
-  const canEditNow = editingOrderId && (isKitchen || isHeadwaiter || isManagerOwner);
+  const canBuildNew = isHeadwaiter && !editingOrderId;
+  const canEditNow = editingOrderId && (isKitchen || isHeadwaiter || isOwner);
   picker.style.display = (canBuildNew || canEditNow) ? "" : "none";
 }
 
@@ -703,9 +772,9 @@ function cancelEditOrder() {
   order = [];
   document.getElementById("order-panel-heading").textContent = "New order";
   document.getElementById("edit-banner").style.display = "none";
-  document.getElementById("table-select").style.display = isKitchen ? "none" : "";
+  document.getElementById("table-select").style.display = (isKitchen || isManagerOwner) ? "none" : "";
   document.getElementById("pay-select").style.display = isHeadwaiter ? "none" : "flex";
-  document.getElementById("pos-order-panel").style.display = (isCashier || isKitchen) ? "none" : "flex";
+  document.getElementById("pos-order-panel").style.display = (isCashier || isKitchen || isManagerOwner) ? "none" : "flex";
   updateMenuPickerVisibility();
   renderOrder();
 }
