@@ -21,7 +21,9 @@ run this for your first several restaurants: **$0/month.**
 > 12. `supabase/migration_v13_order_crud_and_fixes.sql` — adds order editing/voiding, and **fixes a real bug** where the customer waiting page only appeared for QR-placed orders, never ones staff entered on the POS
 > 13. `supabase/migration_v14_table_management.sql` — adds the Tables panel on the owner dashboard
 > 14. `supabase/migration_v15_chai_jaan_client.sql` — adds the Chai Jaan client data (see its own header comment, and the "Onboarding Chai Jaan" section below, before running it)
-> 15. `supabase/migration_v16_workflow_roles_feedback.sql` — **run this last** — adds the kitchen/headwaiter roles, makes the customer's phone number required (for WhatsApp receipts), adds the feedback table, and updates the Staff panel's permissions. See "Kitchen, headwaiter, cashier — how orders flow now" below.
+> 15. `supabase/migration_v16_workflow_roles_feedback.sql` — adds the kitchen/headwaiter roles, makes the customer's phone number required (for WhatsApp receipts, since removed — see below), adds the feedback table, and updates the Staff panel's permissions. See "Kitchen, headwaiter, cashier — how orders flow now" below.
+> 16. `supabase/migration_v17_restaurant_settings.sql` — lets the owner edit the restaurant's WhatsApp number from a settings panel
+> 17. `supabase/migration_v18_manager_parity_and_phone_fix.sql` — **run this last** — **fixes a real bug**: since the customer phone field was removed from the menu, this drops `create_order()`'s requirement of a phone number for QR orders (the v16 requirement would otherwise block every QR order). Also removes the restriction that stopped managers from creating or promoting "owner" accounts, so manager now has full staff-management parity with owner
 >
 > All are safe to run more than once and don't touch your existing
 > tables or data.
@@ -140,14 +142,16 @@ something:
 ## Editing and voiding orders — who can do what now
 
 **Editing** an order's items (fixing a wrong item or quantity) is
-restricted to **kitchen, headwaiter, manager, and owner** — a cashier
-can't edit, only print and close what the kitchen already sent them.
-Tapping **"Edit"** loads that order's real items into the order-building
-panel, hides the table/payment selectors, and the button changes to
-**"Save changes to order."** Cancel is always available if you back out.
+restricted to **kitchen, headwaiter, and owner** — a cashier
+can't edit, only print and close what the kitchen already sent them,
+and manager is view-only on the POS (manages via the dashboard
+instead). Tapping **"Edit"** loads that order's real items into the
+order-building panel, hides the table/payment selectors, and the
+button changes to **"Save changes to order."** Cancel is always
+available if you back out.
 
-**Voiding** an order — cancelling it outright — stays with **cashier,
-manager, and owner** (not headwaiter or kitchen). It doesn't delete the
+**Voiding** an order — cancelling it outright — stays with **cashier
+and owner** (not headwaiter, kitchen, or manager). It doesn't delete the
 order; it sets its status to `void` so it still shows up in your
 records as "this was cancelled" rather than disappearing, and it
 correctly stops counting toward sales totals.
@@ -155,7 +159,7 @@ correctly stops counting toward sales totals.
 ## Marking an item out of stock ("86-ing" it)
 
 Any signed-in staff member who can see the menu grid on the POS
-(headwaiter, kitchen while editing, manager, or owner) can tap the
+(headwaiter, kitchen while editing, or owner while editing) can tap the
 small ✕ in the corner of an item's card to mark it out of stock. It
 grays out immediately with an "Out of stock" badge and can't be tapped
 to add to an order. The customer QR menu picks up the change
@@ -242,18 +246,25 @@ This is the core of the new workflow:
    here), and **editing** any order. They're also the only staff role
    that receives **"Call waiter" alerts** — cashier and kitchen screens
    don't show that panel at all.
-6. **Manager and owner** see and can act on everything, at every
-   stage — the full incoming-orders feed, kitchen progression, closing,
-   editing, and voiding — both on the POS and in a dedicated **"Live
-   orders"** panel on the dashboard, so oversight doesn't require
-   logging into the POS at all.
+6. **Manager** sees everything, at every stage — the full
+   incoming-orders feed and kitchen progression — but is **view-only**
+   on the POS screen: no advancing, editing, voiding, or closing orders
+   from there. Full management (sales, staff, tables, live orders)
+   lives on the **dashboard** instead, and the POS top bar has a
+   **"Dashboard"** link for quick access.
+7. **Owner** has full control everywhere, at every stage — the full
+   incoming-orders feed, kitchen progression, closing, editing, and
+   voiding — both on the POS and in a dedicated **"Live orders"** panel
+   on the dashboard.
 
 ## Manager/owner opening the POS
 
 If you log into `pos.html` with a manager or owner password and it
-opens a screen with full visibility and control (not the narrower
+opens a screen with full visibility (not the narrower
 kitchen/cashier/headwaiter views) — that's intentional. Manager and
-owner get the "eye on everything" view everywhere, including here.
+owner both get the "eye on everything" view of every order, but only
+**owner** can act on those orders from the POS; manager is view-only
+there and manages the restaurant from the dashboard instead.
 
 ## Role-based POS behavior — summary
 
@@ -263,9 +274,10 @@ in — same app, same URL, no separate builds needed:
 | Role | Sees | Can do |
 |---|---|---|
 | **Kitchen** | Open + preparing orders only | Start preparing, mark ready, edit items |
-| **Cashier** | Orders marked "ready" only | Pick payment method, print & close, send WhatsApp receipt, void |
+| **Cashier** | Orders marked "ready" only | Pick payment method, print & close, void |
 | **Headwaiter** | All open orders + call-waiter alerts | Take new orders for guests without a phone, edit any order |
-| **Manager / Owner** | Everything, every stage | Everything — advance, edit, void, close, print |
+| **Manager** | Everything, every stage | View only — no actions on orders from the POS |
+| **Owner** | Everything, every stage | Everything — advance, edit, void, close, print |
 
 This is driven entirely by the `role` value returned from the password
 check, applied in `pos.html`'s `applyRolePermissions()` function — no

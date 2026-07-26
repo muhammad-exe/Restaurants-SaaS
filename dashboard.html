@@ -142,10 +142,9 @@ async function attemptLogin() {
     document.getElementById("btn-logout").onclick = () => window.location.reload();
 
     // Table management now belongs entirely to the manager — the owner
-    // dashboard no longer shows it. A manager also can't create or
-    // promote anyone to "owner" from the Staff panel.
+    // dashboard no longer shows it. Manager now has full parity with
+    // owner everywhere else, including staff management.
     document.getElementById("tables-panel").style.display = staff.role === "manager" ? "block" : "none";
-    document.getElementById("staff-role-owner-option").style.display = staff.role === "manager" ? "none" : "";
 
     await renderPeriod(1);
     await renderStaffList();
@@ -429,7 +428,7 @@ function startEditStaff(id, currentName, currentRole) {
       <option value="headwaiter" ${currentRole === "headwaiter" ? "selected" : ""}>Headwaiter</option>
       <option value="kitchen" ${currentRole === "kitchen" ? "selected" : ""}>Kitchen</option>
       <option value="manager" ${currentRole === "manager" ? "selected" : ""}>Manager</option>
-      ${(!loggedInDashStaff || loggedInDashStaff.role !== "manager") ? `<option value="owner" ${currentRole === "owner" ? "selected" : ""}>Owner</option>` : ""}
+      <option value="owner" ${currentRole === "owner" ? "selected" : ""}>Owner</option>
     </select>
     <button class="btn-mini" data-save="${id}">Save</button>
     <button class="btn-mini" data-cancel="1">Cancel</button>`;
