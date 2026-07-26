@@ -415,12 +415,21 @@ async function pollIncomingOrders() {
     if (advanceBtn) {
       advanceBtn.onclick = async () => {
         const nextAction = advanceBtn.dataset.next;
-        // Open the tab synchronously, still inside the click handler and
-        // before any "await" — browsers silently block window.open() once
-        // it happens after an await, since it's no longer seen as a direct
-        // result of the user's click. We navigate this blank tab once the
-        // order/receipt data is ready below.
-        const waWin = nextAction === "closed" ? window.open("", "_blank") : null;
+        // Build the REAL WhatsApp link and open it synchronously, right
+        // here in the click handler, before any "await" below. Two
+        // separate things require this:
+        //  1. Browsers block window.open() once it happens after an
+        //     await — it's no longer seen as a direct result of the click.
+        //  2. In the Electron desktop wrapper, window.open("", ...) with
+        //     an EMPTY url gets forwarded straight to the OS shell as an
+        //     "about:blank" external link — Windows has no app registered
+        //     for the "about:" scheme, hence the "Get an app to open this
+        //     'about' link" error. Opening the real https:// link from the
+        //     start avoids that entirely.
+        const waLink = nextAction === "closed" && o.customer_phone
+          ? buildWhatsAppReceiptLinkToCustomer(o.customer_phone, o, o.items || [])
+          : null;
+        const waWin = waLink ? window.open(waLink, "_blank", "noopener") : null;
         const ok = await updateOrderStatus(o.id, nextAction, nextAction === "closed" ? "cash" : null);
         if (!ok) {
           if (waWin) waWin.close();
@@ -437,7 +446,7 @@ async function pollIncomingOrders() {
             total: o.total,
             paymentMethod: "cash",
           });
-          sendReceiptToCustomerWhatsApp(o, waWin);
+          showWhatsAppToast(waWin);
         }
         pollIncomingOrders();
       };
@@ -449,9 +458,12 @@ async function pollIncomingOrders() {
         const payMethodSelect = row.querySelector(`[data-pay="${o.id}"]`);
         const method = payMethodSelect ? payMethodSelect.value : "cash";
         closePrintBtn.disabled = true;
-        // Same reasoning as above: open the blank tab now, synchronously,
-        // before the "await" below breaks the direct user-gesture chain.
-        const waWin = window.open("", "_blank");
+        // Same reasoning as above — build the real link and open it now,
+        // synchronously, before the "await" below.
+        const waLink = o.customer_phone
+          ? buildWhatsAppReceiptLinkToCustomer(o.customer_phone, o, o.items || [])
+          : null;
+        const waWin = waLink ? window.open(waLink, "_blank", "noopener") : null;
         const ok = await updateOrderStatus(o.id, "closed", method);
         if (!ok) {
           if (waWin) waWin.close();
@@ -468,7 +480,7 @@ async function pollIncomingOrders() {
           total: o.total,
           paymentMethod: method,
         });
-        sendReceiptToCustomerWhatsApp(o, waWin);
+        showWhatsAppToast(waWin);
         pollIncomingOrders();
       };
     }
@@ -490,32 +502,16 @@ async function pollIncomingOrders() {
   });
 }
 
-// Opens a WhatsApp chat, pre-addressed to the customer's number with
-// their receipt filled in, on THIS device. Meant to be tapped on a
-// restaurant-owned device signed into WhatsApp Business as the
-// restaurant — see buildWhatsAppReceiptLinkToCustomer for the full
-// explanation of why this is a tap, not a fully silent send.
-function sendReceiptToCustomerWhatsApp(o, popupWin) {
-  if (!o.customer_phone) {
-    if (popupWin) popupWin.close();
-    return;
-  }
-  const link = buildWhatsAppReceiptLinkToCustomer(o.customer_phone, o, o.items || []);
-  if (!link) {
-    if (popupWin) popupWin.close();
-    return;
-  }
+// Shows the "opening WhatsApp" toast if a WhatsApp tab was actually
+// opened for this order (i.e. the customer gave a phone number). The
+// tab/window itself is already open by this point — see the two click
+// handlers above, which open the real wa.me link synchronously on click.
+function showWhatsAppToast(waWin) {
+  if (!waWin) return;
   const toast = document.getElementById("toast");
   toast.textContent = "Order saved and closed — opening WhatsApp to send the receipt…";
   toast.classList.add("show");
   setTimeout(() => toast.classList.remove("show"), 2600);
-  if (popupWin && !popupWin.closed) {
-    popupWin.location.href = link;
-  } else {
-    // Fallback for any caller that didn't pre-open a tab — may still get
-    // blocked by the browser if this runs outside a direct click handler.
-    window.open(link, "_blank", "noopener");
-  }
 }
 
 // Role model:
