@@ -415,8 +415,15 @@ async function pollIncomingOrders() {
     if (advanceBtn) {
       advanceBtn.onclick = async () => {
         const nextAction = advanceBtn.dataset.next;
+        // Open the tab synchronously, still inside the click handler and
+        // before any "await" — browsers silently block window.open() once
+        // it happens after an await, since it's no longer seen as a direct
+        // result of the user's click. We navigate this blank tab once the
+        // order/receipt data is ready below.
+        const waWin = nextAction === "closed" ? window.open("", "_blank") : null;
         const ok = await updateOrderStatus(o.id, nextAction, nextAction === "closed" ? "cash" : null);
         if (!ok) {
+          if (waWin) waWin.close();
           alert("Couldn't update this order — check your connection and try again.");
           return;
         }
@@ -430,7 +437,7 @@ async function pollIncomingOrders() {
             total: o.total,
             paymentMethod: "cash",
           });
-          sendReceiptToCustomerWhatsApp(o);
+          sendReceiptToCustomerWhatsApp(o, waWin);
         }
         pollIncomingOrders();
       };
@@ -442,8 +449,12 @@ async function pollIncomingOrders() {
         const payMethodSelect = row.querySelector(`[data-pay="${o.id}"]`);
         const method = payMethodSelect ? payMethodSelect.value : "cash";
         closePrintBtn.disabled = true;
+        // Same reasoning as above: open the blank tab now, synchronously,
+        // before the "await" below breaks the direct user-gesture chain.
+        const waWin = window.open("", "_blank");
         const ok = await updateOrderStatus(o.id, "closed", method);
         if (!ok) {
+          if (waWin) waWin.close();
           alert("Couldn't close this order — check your connection and try again.");
           closePrintBtn.disabled = false;
           return;
@@ -457,7 +468,7 @@ async function pollIncomingOrders() {
           total: o.total,
           paymentMethod: method,
         });
-        sendReceiptToCustomerWhatsApp(o);
+        sendReceiptToCustomerWhatsApp(o, waWin);
         pollIncomingOrders();
       };
     }
@@ -484,15 +495,27 @@ async function pollIncomingOrders() {
 // restaurant-owned device signed into WhatsApp Business as the
 // restaurant — see buildWhatsAppReceiptLinkToCustomer for the full
 // explanation of why this is a tap, not a fully silent send.
-function sendReceiptToCustomerWhatsApp(o) {
-  if (!o.customer_phone) return;
+function sendReceiptToCustomerWhatsApp(o, popupWin) {
+  if (!o.customer_phone) {
+    if (popupWin) popupWin.close();
+    return;
+  }
   const link = buildWhatsAppReceiptLinkToCustomer(o.customer_phone, o, o.items || []);
-  if (!link) return;
+  if (!link) {
+    if (popupWin) popupWin.close();
+    return;
+  }
   const toast = document.getElementById("toast");
   toast.textContent = "Order saved and closed — opening WhatsApp to send the receipt…";
   toast.classList.add("show");
   setTimeout(() => toast.classList.remove("show"), 2600);
-  window.open(link, "_blank", "noopener");
+  if (popupWin && !popupWin.closed) {
+    popupWin.location.href = link;
+  } else {
+    // Fallback for any caller that didn't pre-open a tab — may still get
+    // blocked by the browser if this runs outside a direct click handler.
+    window.open(link, "_blank", "noopener");
+  }
 }
 
 // Role model:
